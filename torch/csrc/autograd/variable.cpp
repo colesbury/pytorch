@@ -3,6 +3,10 @@
 
 #include "THP.h"
 
+
+using namespace torch;
+
+
 PyObject *THPVariableClass = NULL;
 
 constexpr size_t CACHE_SIZE = 100000;
@@ -25,6 +29,20 @@ static inline THPVariable * pop_cache(PyObject *data, PyObject *creator, char re
   self->data = data;
   self->creator = creator;
   return self;
+}
+
+void THVoidTensor_retain(THVoidTensor *self)
+{
+  if(self->flag & TH_TENSOR_REFCOUNTED)
+    THAtomicIncrementRef(&self->refcount);
+}
+
+THVariable::THVariable(THVoidTensor *data, char requires_grad, char is_volatile)
+    : refcount(1), data(data), grad(nullptr),
+      version_counter(new THPVariableVersion()), output_nr(0),
+      is_volatile(is_volatile), requires_grad(requires_grad), pyvar(nullptr)
+{
+  THVoidTensor_retain(data);
 }
 
 // This function DOES NOT steal a reference to data

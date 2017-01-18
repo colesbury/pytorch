@@ -1,6 +1,9 @@
 #ifndef THP_VARIABLE_H
 #define THP_VARIABLE_H
 
+#include "torch/csrc/Types.h"
+
+
 struct THPVariableVersion {
   THPVariableVersion() {
     saved_ref = false;
@@ -45,8 +48,23 @@ struct THPVariableVersion {
   bool saved_ref;
 };
 
+struct THVariable {
+  // TODO: creator
+  int refcount;
+  torch::THVoidTensor *data;
+  THVariable *grad;
+  THPVariableVersion *version_counter;
+  int output_nr;
+  char is_volatile;
+  char requires_grad;
+  PyObject *pyvar;
+
+  THVariable(torch::THVoidTensor *data);
+};
+
 struct THPVariable {
     PyObject_HEAD
+    THVariable *cdata;
     PyObject *creator;
     PyObject *data;
     PyObject *grad;
