@@ -215,11 +215,11 @@ static void _wrap_outputs(THPFunction *self, t2var_type &t2var,
     }
     if (!output_var) throw python_error();
 
-    THVoidTensor *output_tensor = output_var->cdata->data;
+    THVoidTensor *output_tensor = (THVoidTensor*)output_var->cdata->data->data();
     long ndim = output_tensor->nDimension;
     int device_id = -1;
     if (output_var->cdata->is_cuda()) {
-      device_id = output_var->cdata->data->storage->device;
+      device_id = output_tensor->storage->device;
     }
     output_info[i] = std::make_tuple(
       getTHPTensorClass(output_var->cdata->data_type),

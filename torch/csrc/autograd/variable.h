@@ -1,6 +1,8 @@
 #ifndef THP_VARIABLE_H
 #define THP_VARIABLE_H
 
+#include <THPP/THPP.h>
+#include <THPP/Tensor.hpp>
 #include "torch/csrc/Types.h"
 
 
@@ -51,7 +53,7 @@ struct THPVariableVersion {
 struct THVariable {
   int refcount;
   size_t data_type;
-  torch::THVoidTensor *data;
+  thpp::Tensor *data;
   PyObject *creator;
   THVariable *grad;
   std::unique_ptr<THPVariableVersion> version_counter;
@@ -61,12 +63,12 @@ struct THVariable {
   PyObject *backward_hooks;
   PyObject *pyobj;  // weak reference
 
-  THVariable(size_t data_type, torch::THVoidTensor *data, char requires_grad, char is_volatile);
+  THVariable(size_t data_type, thpp::Tensor *data, char requires_grad, char is_volatile);
   ~THVariable();
 
   void free();
   void retain();
-  void set_data(torch::THVoidTensor *data);
+  void set_data(thpp::Tensor *data);
   bool is_cuda();
   bool is_sparse();
 };

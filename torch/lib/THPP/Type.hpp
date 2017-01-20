@@ -26,6 +26,12 @@ enum class Type : char {
   STORAGE = 'S',
 };
 
+class TensorType {
+  Type data_type;
+  bool is_cuda;
+  bool is_sparse;
+};
+
 inline bool isFloat(Type t) {
   return (t == Type::FLOAT || t == Type::DOUBLE);
 }

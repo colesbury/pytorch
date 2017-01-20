@@ -3,34 +3,35 @@
 
 #include "THP.h"
 #include "torch/csrc/DynamicTypes.h"
+#include <THPP/tensors/THTensor.hpp>
 
 
 using namespace torch;
+using namespace thpp;
 
 
 PyObject *THPVariableClass = NULL;
 
-THVariable::THVariable(size_t data_type, THVoidTensor *data, char requires_grad, char is_volatile)
+THVariable::THVariable(size_t data_type, Tensor *data, char requires_grad, char is_volatile)
     : refcount(1), data_type(data_type), data(data), creator(nullptr), grad(nullptr),
       version_counter(new THPVariableVersion()), output_nr(0),
       is_volatile(is_volatile), requires_grad(requires_grad),
       backward_hooks(nullptr), pyobj(nullptr)
 {
-  if (!data) throw std::runtime_error("data is null");
-  THVoidTensor_retain(data_type, data);
+  data->retain();
 }
 
 THVariable::~THVariable()
 {
-  THVoidTensor_free(data_type, data);
+  data->free();
 }
 
-void THVariable::set_data(THVoidTensor *new_data)
+void THVariable::set_data(Tensor *new_data)
 {
   if (!new_data) throw std::runtime_error("new_data is null");
   if (new_data != data) {
-    THVoidTensor_retain(data_type, new_data);
-    THVoidTensor_free(data_type, data);
+    new_data->retain();
+    data->free();
     data = new_data;
   }
 }
@@ -68,6 +69,11 @@ PyObject * THPVariable_Wrap(THVariable *var)
   return var->pyobj;
 }
 
+static Tensor* make_me_a_tensor(PyObject *data)
+{
+  return nullptr;
+}
+
 
 // This function DOES NOT steal a reference to data and creator
 // To create a leaf Variable pass NULL as creator.
@@ -77,7 +83,7 @@ PyObject * THPVariable_New(PyObject *data, PyObject *creator, char requires_grad
   PyTypeObject *type = (PyTypeObject *)THPVariableClass;
   PyObject *obj = type->tp_alloc(type, 0);
   if (obj) {
-    THVoidTensor *tensor = ((THPVoidTensor *)data)->cdata;
+    Tensor *tensor = nullptr ; // FIXME ((THPVoidTensor *)data)->cdata;
     size_t data_type = getTypeIdxForClass((PyObject *)Py_TYPE(data));
     ((THPVariable *)obj)->cdata = new THVariable(data_type, tensor, requires_grad, is_volatile);
     ((THPVariable *)obj)->cdata->creator = creator;
@@ -165,15 +171,16 @@ PyObject *THPVariable_get_creator(THPVariable *self)
 PyObject * THPVariable_get_data(THPVariable *self)
 {
   THVariable *var = self->cdata;
-  THVoidTensor_retain(var->data_type, var->data);
-  return THPVoidTensor_New(var->data_type, var->data);
+  var->data->retain();
+  return nullptr; // FIXME
+  // return THPVoidTensor_New(var->data_type, var->data);
 }
 
 int THPVariable_set_data(THPVariable *self, PyObject *data)
 {
   THPUtils_assertRet(-1, THPModule_isTensor(data), "Variable data has to "
       "be a tensor, but got %s", THPUtils_typename(data));
-  self->cdata->set_data(((THPVoidTensor *)data)->cdata);
+  //FIXME self->cdata->set_data(((THPVoidTensor *)data)->cdata);
   return 0;
 }
 
@@ -182,11 +189,12 @@ PyObject *THPVariable_get_grad(THPVariable *self)
   THVariable *var = self->cdata;
   auto data_type = var->data_type;
   if (!var->grad) {
-    THLongStoragePtr size = THVoidTensor_newSizeOf(data_type, var->data);
-    THVoidTensor* grad_data = THVoidTensor_newWithSize(data_type, size);
-    // TODO: error?
-    var->grad = new THVariable(data_type, grad_data, 0, 1);
-    THVoidTensor_free(data_type, grad_data);
+    // FIXME
+    // THLongStoragePtr size = THVoidTensor_newSizeOf(data_type, var->data);
+    // THVoidTensor* grad_data = THVoidTensor_newWithSize(data_type, size);
+    // // TODO: error?
+    // var->grad = new THVariable(data_type, grad_data, 0, 1);
+    // THVoidTensor_free(data_type, grad_data);
   }
   return THPVariable_Wrap(var->grad);
 }
