@@ -4,94 +4,46 @@
 #include <vector>
 #include <unordered_map>
 
+using namespace thpp;
 
 namespace torch {
 
-// ordering must match enum DataType
-static const char* TYPE_NAMES[] = {
-  "Float",
-  "Double",
-  "Half",
-  "Byte",
-  "Char",
-  "Short",
-  "Int",
-  "Long",
-  nullptr,
+static std::unordered_map<std::string, thpp::Type> type_names = {
+  {"Float", Type::FLOAT},
+  {"Double", Type::DOUBLE},
+  {"Half", Type::HALF},
+  {"Byte", Type::UCHAR},
+  {"Char", Type::CHAR},
+  {"Short", Type::SHORT},
+  {"Int", Type::INT},
+  {"Long", Type::LONG},
 };
+static std::unordered_map<PyTypeObject*, thpp::TensorType> pytype_to_tensortype;
+static std::unordered_map<thpp::TensorType, PyTypeObject*> tensortype_to_pytype;
 
-static std::vector<DynamicType> types;
-static std::unordered_map<PyObject *, size_t> class_map;
-
-size_t getTypeIdx(const char *name, bool is_cuda, bool is_sparse)
+TensorType getTensorType(const std::string& name, bool is_cuda, bool is_sparse)
 {
-  size_t type_idx = 0;
-  while (1) {
-    if (!TYPE_NAMES[type_idx]) {
-      throw std::runtime_error("invalid type name");
-    }
-    if (strcmp(TYPE_NAMES[type_idx], name) == 0) {
-      if (is_cuda) {
-        type_idx |= FLAG_CUDA;
-      }
-      if (is_sparse) {
-        type_idx |= FLAG_SPARSE;
-      }
-      return type_idx;
-    }
-    ++type_idx;
-  }
+  TensorType t;
+  t.data_type = type_names.at(name);
+  t.is_cuda = is_cuda;
+  t.is_sparse = is_sparse;
+  return t;
 }
 
-size_t getTypeIdxForClass(PyObject *classobj)
+void registerType(thpp::TensorType type, PyTypeObject *pytype)
 {
-  return class_map.at(classobj);
+  pytype_to_tensortype[pytype] = type;
+  tensortype_to_pytype[type] = pytype;
 }
 
-void registerType(size_t type_idx, const DynamicType& type)
+thpp::TensorType getTensorType(PyTypeObject *type)
 {
-  if (types.size() <= (size_t)type_idx) {
-    types.resize(type_idx + 1);
-  }
-  types[type_idx] = type;
-  class_map[type.classobj] = type_idx;
+  return pytype_to_tensortype.at(type);
 }
 
-PyObject* getTHPTensorClass(size_t data_type)
+PyTypeObject* getPyTypeObject(thpp::TensorType type)
 {
-  return types.at(data_type).classobj;
-}
-
-void THVoidTensor_retain(size_t data_type, THVoidTensor *cdata)
-{
-  types.at(data_type).retain(cdata);
-}
-
-void THVoidTensor_free(size_t data_type, THVoidTensor *cdata)
-{
-  types.at(data_type).free(cdata);
-}
-
-THVoidTensor* THVoidTensor_newWithSize(size_t data_type, THLongStorage *size)
-{
-  return (THVoidTensor*)types.at(data_type).newWithSize(size);
-}
-
-THLongStorage* THVoidTensor_newSizeOf(size_t data_type, THVoidTensor *size)
-{
-  return types.at(data_type).newSizeOf(size);
-}
-
-
-PyObject* THPVoidTensor_New(size_t data_type, THVoidTensor *cdata)
-{
-  PyTypeObject *type = (PyTypeObject *)types.at(data_type).classobj;
-  PyObject *obj = type->tp_alloc(type, 0);
-  // TODO: relase cdata on error
-  if (obj) {
-    ((THPVoidTensor *)obj)->cdata = cdata;
-  }
-  return obj;
+  return tensortype_to_pytype.at(type);
 }
 
 }  // namespace

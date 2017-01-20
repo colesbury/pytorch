@@ -12,7 +12,7 @@ using namespace thpp;
 
 PyObject *THPVariableClass = NULL;
 
-THVariable::THVariable(size_t data_type, Tensor *data, char requires_grad, char is_volatile)
+THVariable::THVariable(Tensor *data, char requires_grad, char is_volatile)
     : refcount(1), data_type(data_type), data(data), creator(nullptr), grad(nullptr),
       version_counter(new THPVariableVersion()), output_nr(0),
       is_volatile(is_volatile), requires_grad(requires_grad),
@@ -50,7 +50,7 @@ void THVariable::retain()
 
 bool THVariable::is_cuda()
 {
-  return (data_type & FLAG_CUDA) == FLAG_CUDA;
+  return false; //FIXME
 }
 
 
@@ -84,8 +84,7 @@ PyObject * THPVariable_New(PyObject *data, PyObject *creator, char requires_grad
   PyObject *obj = type->tp_alloc(type, 0);
   if (obj) {
     Tensor *tensor = nullptr ; // FIXME ((THPVoidTensor *)data)->cdata;
-    size_t data_type = getTypeIdxForClass((PyObject *)Py_TYPE(data));
-    ((THPVariable *)obj)->cdata = new THVariable(data_type, tensor, requires_grad, is_volatile);
+    ((THPVariable *)obj)->cdata = new THVariable(tensor, requires_grad, is_volatile);
     ((THPVariable *)obj)->cdata->creator = creator;
     ((THPVariable *)obj)->cdata->pyobj = obj;
     Py_XINCREF(creator);
@@ -187,8 +186,8 @@ int THPVariable_set_data(THPVariable *self, PyObject *data)
 PyObject *THPVariable_get_grad(THPVariable *self)
 {
   THVariable *var = self->cdata;
-  auto data_type = var->data_type;
   if (!var->grad) {
+    // auto grad_data = v
     // FIXME
     // THLongStoragePtr size = THVoidTensor_newSizeOf(data_type, var->data);
     // THVoidTensor* grad_data = THVoidTensor_newWithSize(data_type, size);

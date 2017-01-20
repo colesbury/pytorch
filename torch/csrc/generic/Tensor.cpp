@@ -834,19 +834,8 @@ bool THPTensor_(postInit)(PyObject *module)
   is_cuda = true;
 #endif
   const char *type_name = TH_CONCAT_STRING_2(Real,);
-  size_t type_idx = torch::getTypeIdx(type_name, is_cuda, false);
-  torch::DynamicType type = {
-    THPTensorClass,
-    [](void* cdata) { THTensor_(free)(LIBRARY_STATE (THTensor*)cdata); },
-    [](void* cdata) { THTensor_(retain)(LIBRARY_STATE (THTensor*)cdata); },
-    [](THLongStorage* size) {
-        THTensor* t = THTensor_(newWithSize)(LIBRARY_STATE size, NULL);
-        THTensor_(zero)(LIBRARY_STATE t);
-        return t;
-    },
-    [](void* cdata) { return THTensor_(newSizeOf)(LIBRARY_STATE (THTensor*)cdata); }
-  };
-  torch::registerType(type_idx, type);
+  auto tensorType = torch::getTensorType(type_name, is_cuda, false);
+  torch::registerType(tensorType, (PyTypeObject *)THPTensorClass);
   return true;
 }
 

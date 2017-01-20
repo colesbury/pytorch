@@ -13,6 +13,7 @@ enum class Type : char {
   UCHAR = 'B',
   FLOAT = 'f',
   DOUBLE = 'd',
+  HALF = 'a',
   SHORT = 'h',
   USHORT = 'H',
   INT = 'i',

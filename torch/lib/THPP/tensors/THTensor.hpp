@@ -58,6 +58,8 @@ public:
   virtual bool isContiguous() const override;
   virtual void* data() override;
   virtual const void* data() const override;
+  virtual void* cdata() override;
+  virtual const void* cdata() const override;
   virtual THTensor& retain() override;
   virtual THTensor& free() override;
 

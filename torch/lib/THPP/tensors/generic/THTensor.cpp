@@ -85,6 +85,16 @@ const void* THTensor<real>::data() const {
 }
 
 template<>
+void* THTensor<real>::cdata() {
+  return tensor;
+}
+
+template<>
+const void* THTensor<real>::cdata() const {
+  return tensor;
+}
+
+template<>
 auto THTensor<real>::resize(const std::initializer_list<long> &new_size) -> THTensor& {
   return resize(new_size.begin(), new_size.end());
 }

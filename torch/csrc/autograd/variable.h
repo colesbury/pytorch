@@ -63,7 +63,7 @@ struct THVariable {
   PyObject *backward_hooks;
   PyObject *pyobj;  // weak reference
 
-  THVariable(size_t data_type, thpp::Tensor *data, char requires_grad, char is_volatile);
+  THVariable(thpp::Tensor *data, char requires_grad, char is_volatile);
   ~THVariable();
 
   void free();

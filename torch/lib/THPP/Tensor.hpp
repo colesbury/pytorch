@@ -36,6 +36,8 @@ struct Tensor {
   virtual bool isContiguous() const = 0;
   virtual void* data() = 0;
   virtual const void* data() const = 0;
+  virtual void* cdata() = 0;
+  virtual const void* cdata() const = 0;
   virtual Tensor& retain() = 0;
   virtual Tensor& free() = 0;
 
