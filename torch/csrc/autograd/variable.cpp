@@ -2,6 +2,7 @@
 #include <structmember.h>
 
 #include "THP.h"
+#include "torch/csrc/DynamicTypes.h"
 
 
 using namespace torch;
@@ -9,206 +10,138 @@ using namespace torch;
 
 PyObject *THPVariableClass = NULL;
 
-constexpr size_t CACHE_SIZE = 100000;
-static THPVariable *cached_variables[CACHE_SIZE];
-static size_t num_cached;
-
-// This helper steals a reference to data and creator
-static inline THPVariable * pop_cache(PyObject *data, PyObject *creator, char requires_grad)
-{
-  THPVariable *self = cached_variables[--num_cached];
-  PyObject_Init((PyObject*)self, Py_TYPE(self));
-  PyObject_GC_Track(self);
-
-  self->is_volatile = 0;
-  self->version_counter = new THPVariableVersion();
-  self->grad = NULL;
-  self->backward_hooks = NULL;
-  self->requires_grad = requires_grad;
-
-  self->data = data;
-  self->creator = creator;
-  return self;
-}
-
-void THVoidTensor_retain(THVoidTensor *self)
-{
-  if(self->flag & TH_TENSOR_REFCOUNTED)
-    THAtomicIncrementRef(&self->refcount);
-}
-
-THVariable::THVariable(THVoidTensor *data, char requires_grad, char is_volatile)
-    : refcount(1), data(data), grad(nullptr),
+THVariable::THVariable(size_t data_type, THVoidTensor *data, char requires_grad, char is_volatile)
+    : refcount(1), data_type(data_type), data(data), creator(nullptr), grad(nullptr),
       version_counter(new THPVariableVersion()), output_nr(0),
-      is_volatile(is_volatile), requires_grad(requires_grad), pyvar(nullptr)
+      is_volatile(is_volatile), requires_grad(requires_grad),
+      backward_hooks(nullptr), pyobj(nullptr)
 {
-  THVoidTensor_retain(data);
+  if (!data) throw std::runtime_error("data is null");
+  THVoidTensor_retain(data_type, data);
+}
+
+THVariable::~THVariable()
+{
+  THVoidTensor_free(data_type, data);
+}
+
+void THVariable::set_data(THVoidTensor *new_data)
+{
+  if (!new_data) throw std::runtime_error("new_data is null");
+  if (new_data != data) {
+    THVoidTensor_retain(data_type, new_data);
+    THVoidTensor_free(data_type, data);
+    data = new_data;
+  }
+}
+
+void THVariable::free()
+{
+  if (THAtomicDecrementRef(&refcount)) {
+    delete this;
+  }
+}
+
+void THVariable::retain()
+{
+  THAtomicIncrementRef(&refcount);
+}
+
+bool THVariable::is_cuda()
+{
+  return (data_type & FLAG_CUDA) == FLAG_CUDA;
+}
+
+
+PyObject * THPVariable_Wrap(THVariable *var)
+{
+  if (var->pyobj) {
+    Py_INCREF(var->pyobj);
+  } else {
+    PyTypeObject *type = (PyTypeObject *)THPVariableClass;
+    var->pyobj = type->tp_alloc(type, 0);
+    if (var->pyobj) {
+      ((THPVariable *)var->pyobj)->cdata = var;
+      var->retain();
+    }
+  }
+  return var->pyobj;
+}
+
+
+// This function DOES NOT steal a reference to data and creator
+// To create a leaf Variable pass NULL as creator.
+PyObject * THPVariable_New(PyObject *data, PyObject *creator, char requires_grad, char is_volatile)
+{
+  THPUtils_assert(THPModule_isTensor(data), "data must be a Tensor");
+  PyTypeObject *type = (PyTypeObject *)THPVariableClass;
+  PyObject *obj = type->tp_alloc(type, 0);
+  if (obj) {
+    THVoidTensor *tensor = ((THPVoidTensor *)data)->cdata;
+    size_t data_type = getTypeIdxForClass((PyObject *)Py_TYPE(data));
+    ((THPVariable *)obj)->cdata = new THVariable(data_type, tensor, requires_grad, is_volatile);
+    ((THPVariable *)obj)->cdata->creator = creator;
+    ((THPVariable *)obj)->cdata->pyobj = obj;
+    Py_XINCREF(creator);
+  }
+  return obj;
 }
 
 // This function DOES NOT steal a reference to data
 PyObject * THPVariable_NewVolatile(PyObject *data)
 {
-  THPVariable *variable;
-  if (num_cached > 0) {
-    Py_INCREF(data);
-    variable = pop_cache(data, NULL, 0);
-  } else {
-    variable = (THPVariable*)PyObject_CallFunctionObjArgs(THPVariableClass, data, NULL);
-  }
-  ((THPVariable*)variable)->is_volatile = 1;
-  return (PyObject*)variable;
-}
-
-// This function DOES NOT steal a reference to data and creator
-// To create a leaf Variable pass NULL as creator.
-PyObject * THPVariable_New(PyObject *data, PyObject *creator, char requires_grad)
-{
-  if (num_cached > 0) {
-    Py_INCREF(data);
-    Py_XINCREF(creator);
-    return (PyObject*)pop_cache(data, creator, requires_grad);
-  }
-  // We can't pass a NULL creator to this Python call, because Py_BuildValue
-  // will raise an error (it tries to be overly smart by setting its own error
-  // if there's no flag set at the moment and we're giving NULL to some
-  // function).
-  creator = creator ? creator : Py_None;
-  return PyObject_CallFunction(THPVariableClass, "OObb", data, creator, (char)0, requires_grad);
+  return THPVariable_New(data, nullptr, 0, 1);
 }
 
 static int THPVariable_traverse(THPVariable *self, visitproc visit, void *arg)
 {
-  Py_VISIT(self->creator);
-  Py_VISIT(self->data);
-  Py_VISIT(self->grad);
-  Py_VISIT(self->backward_hooks);
+  Py_VISIT(self->cdata->creator);
+  Py_VISIT(self->cdata->backward_hooks);
   return 0;
 }
 
 static int THPVariable_clear(THPVariable *self)
 {
-  Py_CLEAR(self->creator);
-  Py_CLEAR(self->data);
-  Py_CLEAR(self->grad);
-  Py_CLEAR(self->backward_hooks);
+  Py_CLEAR(self->cdata->creator);
+  Py_CLEAR(self->cdata->backward_hooks);
   return 0;
 }
 
 static void THPVariable_dealloc(THPVariable* self)
 {
   PyObject_GC_UnTrack(self);
-  Py_XDECREF(self->creator);
-  Py_XDECREF(self->data);
-  Py_XDECREF(self->grad);
-  Py_XDECREF(self->backward_hooks);
-  delete self->version_counter;
-  self->version_counter = nullptr;
-
-  // We don't want to cache any subclasses
-  if ((PyObject*)Py_TYPE(self) == THPVariableClass && num_cached < CACHE_SIZE) {
-    cached_variables[num_cached++] = self;
-    // Variable class is defined in Python code, and as such has a
-    // Py_TPFLAGS_HEAPTYPE flag set, so python DECREFs the class at each
-    // object dealloc.
-    Py_INCREF(Py_TYPE(self));
-  } else {
-    Py_TYPE(self)->tp_free((PyObject*)self);
-  }
+  Py_XDECREF(self->cdata->creator);
+  Py_XDECREF(self->cdata->backward_hooks);
+  self->cdata->pyobj = nullptr;
+  self->cdata->free();
+  self->cdata = nullptr;
+  Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
-PyObject *THPVariable_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
+PyObject *THPVariable_pynew(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
-  THPVariable *self;
-  if ((PyObject*)type != THPVariableClass || num_cached == 0) {
-    self = (THPVariable*)type->tp_alloc(type, 0);
-    if (!self) return NULL;
-    self->version_counter = new THPVariableVersion();
-  } else {
-    self = pop_cache(NULL, NULL, 0);
-  }
-  return (PyObject*)self;
-}
+  PyObject *data;
+  PyObject *creator = NULL;
+  char is_volatile = 0;
+  char requires_grad = 0;
 
-int THPVariable_init(THPVariable *self, PyObject *args, PyObject *kwargs)
-{
   const char *accepted_args[] = {"data", "creator", "volatile", "requires_grad", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|Obb", (char**)accepted_args,
-      &self->data, &self->creator, &self->is_volatile,
-      &self->requires_grad))
-    return -1;
-  Py_INCREF(self->data);
-  if (self->creator == Py_None)
-    self->creator = NULL;
-  Py_XINCREF(self->creator);
-  THPUtils_assertRet(-1, !(self->is_volatile && self->requires_grad),
-          "Variable can't be volatile and require_grad at the same time!");
-  THPUtils_assertRet(-1, !self->creator || THPFunction_Check(self->creator),
-          "Variable creator has to be a Function object or None, but got %s",
-          THPUtils_typename(self->creator));
-  THPUtils_assertRet(-1, THPModule_isTensor(self->data), "Variable data has to "
-          "be a tensor, but got %s", THPUtils_typename(self->data));
-  return 0;
-}
-
-PyObject * THPVariable_getstate(THPVariable *self)
-{
-  THPUtils_assert(!self->creator, "serialization of non-leaf variables is not "
-      "implemented yet");
-  THPObjectPtr state = PyTuple_New(5);
-  if (!state)
+      &data, &creator, &is_volatile, &requires_grad))
     return NULL;
 
-  Py_INCREF(self->data);
-  PyTuple_SET_ITEM(state.get(), 0, self->data);
+  if (creator == Py_None)
+    creator = NULL;
 
-  PyObject *grad = self->grad ? self->grad : Py_None;
-  Py_INCREF(grad);
-  PyTuple_SET_ITEM(state.get(), 1, grad);
+  THPUtils_assert(!(is_volatile && requires_grad),
+          "Variable can't be volatile and require_grad at the same time!");
+  THPUtils_assert(!creator || THPFunction_Check(creator),
+          "Variable creator has to be a Function object or None, but got %s",
+          THPUtils_typename(creator));
+  THPUtils_assert(THPModule_isTensor(data), "Variable data has to "
+          "be a tensor, but got %s", THPUtils_typename(data));
 
-  PyObject *backward_hooks = self->backward_hooks ? self->backward_hooks : Py_None;
-  Py_INCREF(backward_hooks);
-  PyTuple_SET_ITEM(state.get(), 2, backward_hooks);
-
-  PyTuple_SET_ITEM(state.get(), 3, PyBool_FromLong(self->requires_grad));
-  PyTuple_SET_ITEM(state.get(), 4, PyBool_FromLong(self->is_volatile));
-
-  return state.release();
-}
-
-PyObject * THPVariable_setstate(THPVariable *self, PyObject *state)
-{
-  THPUtils_assert(!self->creator, "__setstate__ can be only called on leaf "
-      "variables");
-  THPUtils_assert(PyTuple_Check(state), "__setstate__ expects state to be a "
-      "tuple");
-  Py_ssize_t size = PyTuple_GET_SIZE(state);
-  THPUtils_assert(size == 5, "__setstate__ expects state tuple to have 5 "
-      "elements, but it has %d", size);
-
-#define LOAD(NAME, IDX)                                                        \
-  Py_XDECREF(self->NAME);                                                      \
-  self->NAME = PyTuple_GET_ITEM(state, IDX) == Py_None ? NULL : PyTuple_GET_ITEM(state, IDX); \
-  Py_XINCREF(self->NAME);
-  THPUtils_assert(THPModule_isTensor(PyTuple_GET_ITEM(state, 0)), "first "
-          "element of variable state tuple has to be a tensor");
-  LOAD(data, 0);
-
-  LOAD(grad, 1);
-  LOAD(backward_hooks, 2);
-#undef LOAD
-
-  PyObject *requires_grad_obj = PyTuple_GET_ITEM(state, 3);
-  PyObject *is_volatile_obj = PyTuple_GET_ITEM(state, 4);
-  THPUtils_assert(PyBool_Check(requires_grad_obj), "requires_grad "
-      "found in state was expected to be a bool, but got %s",
-      THPUtils_typename(requires_grad_obj));
-  THPUtils_assert(PyBool_Check(is_volatile_obj), "is_volatile "
-      "found in state was expected to be a bool, but got %s",
-      THPUtils_typename(is_volatile_obj));
-  self->requires_grad= requires_grad_obj == Py_True ? 1 : 0;
-  self->is_volatile = is_volatile_obj == Py_True ? 1 : 0;
-
-  Py_RETURN_NONE;
+  return THPVariable_New(data, creator, requires_grad, is_volatile);
 }
 
 typedef PyObject *(*getter)(PyObject *, void *);
@@ -216,28 +149,105 @@ typedef int (*setter)(PyObject *, PyObject *, void *);
 
 PyObject *THPVariable_get_version(THPVariable *self)
 {
-  return PyInt_FromLong(**self->version_counter);
+  return PyInt_FromLong(**self->cdata->version_counter);
+}
+
+PyObject *THPVariable_get_creator(THPVariable *self)
+{
+  PyObject *creator = self->cdata->creator;
+  if (!creator) {
+    Py_RETURN_NONE;
+  }
+  Py_INCREF(creator);
+  return creator;
+}
+
+PyObject * THPVariable_get_data(THPVariable *self)
+{
+  THVariable *var = self->cdata;
+  THVoidTensor_retain(var->data_type, var->data);
+  return THPVoidTensor_New(var->data_type, var->data);
+}
+
+int THPVariable_set_data(THPVariable *self, PyObject *data)
+{
+  THPUtils_assertRet(-1, THPModule_isTensor(data), "Variable data has to "
+      "be a tensor, but got %s", THPUtils_typename(data));
+  self->cdata->set_data(((THPVoidTensor *)data)->cdata);
+  return 0;
+}
+
+PyObject *THPVariable_get_grad(THPVariable *self)
+{
+  THVariable *var = self->cdata;
+  auto data_type = var->data_type;
+  if (!var->grad) {
+    THLongStoragePtr size = THVoidTensor_newSizeOf(data_type, var->data);
+    THVoidTensor* grad_data = THVoidTensor_newWithSize(data_type, size);
+    // TODO: error?
+    var->grad = new THVariable(data_type, grad_data, 0, 1);
+    THVoidTensor_free(data_type, grad_data);
+  }
+  return THPVariable_Wrap(var->grad);
+}
+
+PyObject *THPVariable_get_volatile(THPVariable *self)
+{
+  return PyBool_FromLong(self->cdata->is_volatile);
+}
+
+int THPVariable_set_volatile(THPVariable *self, PyObject *obj)
+{
+  THPUtils_assertRet(-1, PyBool_Check(obj), "volatile must be a bool");
+  self->cdata->is_volatile = (obj == Py_True);
+  return 0;
+}
+
+PyObject *THPVariable_get_output_nr(THPVariable *self)
+{
+  return PyInt_FromLong(self->cdata->output_nr);
+}
+
+PyObject *THPVariable_get_requires_grad(THPVariable *self)
+{
+  return PyBool_FromLong(self->cdata->requires_grad);
+}
+
+int THPVariable_set_requires_grad(THPVariable *self, PyObject *obj)
+{
+  THPUtils_assertRet(-1, PyBool_Check(obj), "requires_grad must be a bool");
+  if (self->cdata->creator) {
+    const char *hint = "";
+    if (obj == Py_False) {
+      hint = " If you want to use a computed variable in a subgraph "
+             "that doesn't require differentiation use "
+             "var_no_grad = var.detach().";
+    }
+    THPUtils_setError("you can only change requires_grad flags of leaf variables.%s", hint);
+    return -1;
+  }
+  self->cdata->requires_grad = (obj == Py_True);
+  return 0;
+}
+
+PyObject *THPVariable_get_backwards_hooks(THPVariable *self)
+{
+  if (self->cdata->backward_hooks) {
+    Py_INCREF(self->cdata->backward_hooks);
+    return self->cdata->backward_hooks;
+  }
+  Py_RETURN_NONE;
 }
 
 static struct PyGetSetDef THPVariable_properties[] = {
   {"_version", (getter)THPVariable_get_version, NULL, NULL, NULL},
-  {NULL}
-};
-
-static struct PyMemberDef THPVariable_members[] = {
-  {(char*)"creator",        T_OBJECT,   offsetof(THPVariable, creator), 0, NULL},
-  {(char*)"data",           T_OBJECT,   offsetof(THPVariable, data), 0, NULL},
-  {(char*)"_grad",          T_OBJECT,   offsetof(THPVariable, grad), 0, NULL},
-  {(char*)"volatile",       T_BOOL,     offsetof(THPVariable, is_volatile), 0, NULL},
-  {(char*)"output_nr",      T_INT,      offsetof(THPVariable, output_nr), 0, NULL},
-  {(char*)"_backward_hooks",T_OBJECT,   offsetof(THPVariable, backward_hooks), 0, NULL},
-  {(char*)"_requires_grad", T_BOOL,     offsetof(THPVariable, requires_grad), 0, NULL},
-  {NULL}
-};
-
-static struct PyMethodDef THPVariable_methods[] = {
-  {"__getstate__", (PyCFunction)THPVariable_getstate, METH_NOARGS, NULL},
-  {"__setstate__", (PyCFunction)THPVariable_setstate, METH_O, NULL},
+  {"creator", (getter)THPVariable_get_creator, NULL, NULL, NULL},
+  {"data", (getter)THPVariable_get_data, (setter)THPVariable_set_data, NULL, NULL},
+  {"grad", (getter)THPVariable_get_grad, NULL, NULL, NULL},
+  {"volatile", (getter)THPVariable_get_volatile, (setter)THPVariable_set_volatile, NULL, NULL},
+  {"output_nr", (getter)THPVariable_get_output_nr, NULL, NULL, NULL},
+  {"requires_grad", (getter)THPVariable_get_requires_grad, (setter)THPVariable_set_requires_grad, NULL, NULL},
+  {"_backward_hooks", (getter)THPVariable_get_backwards_hooks, NULL, NULL, NULL},
   {NULL}
 };
 
@@ -270,17 +280,17 @@ PyTypeObject THPVariableType = {
   0,                                     /* tp_weaklistoffset */
   0,                                     /* tp_iter */
   0,                                     /* tp_iternext */
-  THPVariable_methods,                   /* tp_methods */
-  THPVariable_members,                   /* tp_members */
+  0,                                     /* tp_methods */
+  0,                                     /* tp_members */
   THPVariable_properties,                /* tp_getset */
   0,                                     /* tp_base */
   0,                                     /* tp_dict */
   0,                                     /* tp_descr_get */
   0,                                     /* tp_descr_set */
   0,                                     /* tp_dictoffset */
-  (initproc)THPVariable_init,            /* tp_init */
+  0,                                     /* tp_init */
   0,                                     /* tp_alloc */
-  THPVariable_new                        /* tp_new */
+  THPVariable_pynew                      /* tp_new */
 };
 
 

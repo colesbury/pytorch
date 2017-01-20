@@ -6,6 +6,7 @@
 
 template <typename T> struct THPTypeInfo {};
 
+
 namespace torch {
 
 typedef struct THVoidStorage
@@ -17,6 +18,7 @@ typedef struct THVoidStorage
   void *allocator;
   void *allocatorContext;
   THVoidStorage *view;
+  int device;  // only valid for THCStorage 
 } THVoidStorage;
 
 typedef struct THVoidTensor

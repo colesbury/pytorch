@@ -37,6 +37,7 @@ extern PyObject *THSPTensorClass;
 extern PyTypeObject THPTensorStatelessType;
 extern PyTypeObject THSPTensorStatelessType;
 bool THPTensor_(init)(PyObject *module);
+bool THPTensor_(postInit)(PyObject *module);
 bool THSPTensor_(init)(PyObject *module);
 
 extern PyTypeObject THPTensorType;

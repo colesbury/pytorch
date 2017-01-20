@@ -56,29 +56,29 @@ class Variable(_C._VariableBase):
         'is_cuda',
     }
 
-    @property
-    def grad(self):
-        if self.requires_grad and self._grad is None:
-            # TODO: this won't have to be zeroed in the future
-            self._grad = Variable(self.data.new(self.data.size()).zero_())
-        return self._grad
-
-    @property
-    def requires_grad(self):
-        return self._requires_grad
-
-    @requires_grad.setter
-    def requires_grad(self, value):
-        if self.creator is not None:
-            if value is False:
-                hint = (" If you want to use a computed variable in a subgraph "
-                    "that doesn't require differentiation use "
-                    "var_no_grad = var.detach().")
-            else:
-                hint = ''
-            raise RuntimeError("you can only change requires_grad flags of "
-                    "leaf variables." + hint)
-        self._requires_grad = value
+    # @property
+    # def grad(self):
+    #     if self.requires_grad and self._grad is None:
+    #         # TODO: this won't have to be zeroed in the future
+    #         self._grad = Variable(self.data.new(self.data.size()).zero_())
+    #     return self._grad
+    #
+    # @property
+    # def requires_grad(self):
+    #     return self._requires_grad
+    #
+    # @requires_grad.setter
+    # def requires_grad(self, value):
+    #     if self.creator is not None:
+    #         if value is False:
+    #             hint = (" If you want to use a computed variable in a subgraph "
+    #                 "that doesn't require differentiation use "
+    #                 "var_no_grad = var.detach().")
+    #         else:
+    #             hint = ''
+    #         raise RuntimeError("you can only change requires_grad flags of "
+    #                 "leaf variables." + hint)
+    #     self._requires_grad = value
 
     def __getattr__(self, name):
         if name in self._fallthrough_methods:
@@ -740,6 +740,15 @@ class Variable(_C._VariableBase):
 
     def __iter__(self):
         return iter(map(lambda i: self[i], range(self.size(0))))
+
+    def __getstate__(self):
+        return (self.data, self.grad, self.backward_hooks, self.requires_grad,
+                self.volatile)
+
+    def __setstate__(self, state):
+        if self.creator is not None:
+            raise RuntimeError('__setstate__ can be only called on leaf variables')
+        self.data, self.grad, self.backward_hooks, self.requires_grad, self.volatile = state
 
     class _torch(object):
 

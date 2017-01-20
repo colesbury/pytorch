@@ -49,44 +49,43 @@ struct THPVariableVersion {
 };
 
 struct THVariable {
-  // TODO: creator
   int refcount;
+  size_t data_type;
   torch::THVoidTensor *data;
+  PyObject *creator;
   THVariable *grad;
-  THPVariableVersion *version_counter;
+  std::unique_ptr<THPVariableVersion> version_counter;
   int output_nr;
   char is_volatile;
   char requires_grad;
-  PyObject *pyvar;
+  PyObject *backward_hooks;
+  PyObject *pyobj;  // weak reference
 
-  THVariable(torch::THVoidTensor *data);
+  THVariable(size_t data_type, torch::THVoidTensor *data, char requires_grad, char is_volatile);
+  ~THVariable();
+
+  void free();
+  void retain();
+  void set_data(torch::THVoidTensor *data);
+  bool is_cuda();
+  bool is_sparse();
 };
 
 struct THPVariable {
     PyObject_HEAD
     THVariable *cdata;
-    PyObject *creator;
-    PyObject *data;
-    PyObject *grad;
-    PyObject *backward_hooks;
-    THPVariableVersion *version_counter;
-    int output_nr;
-    char is_volatile;
-    char requires_grad;
 };
 
 bool THPVariable_initModule(PyObject *module);
 extern PyObject *THPVariableClass;
 PyObject * THPVariable_NewVolatile(PyObject *data);
-PyObject * THPVariable_New(PyObject *data, PyObject *creator, char requires_grad);
+PyObject * THPVariable_New(PyObject *data, PyObject *creator, char requires_grad, char is_volatile=0);
 
-#define THPVariable_Check(obj)                                                 \
-    (THPVariableClass &&                                                       \
-     PyObject_IsInstance(obj, THPVariableClass))
+PyObject * THPVariable_get_data(THPVariable *self);
 
-#define THPVariable_CheckType(obj, func)                                       \
-    (THPVariableClass &&                                                       \
-     (PyObject_IsInstance(obj, THPVariableClass) &&                            \
-        func(((THPVariable*)obj)->data)))
+inline bool THPVariable_Check(PyObject *obj)
+{
+  return THPVariableClass && PyObject_IsInstance(obj, THPVariableClass);
+}
 
 #endif

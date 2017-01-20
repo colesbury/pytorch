@@ -149,8 +149,8 @@ PyObject *THPEngine_run_backward(THPEngine *self, PyObject *args, PyObject *kwar
     THPUtils_assert(THPVariable_Check((PyObject*)variable), "element %d of variables "
         "tuple is not a Variable", i);
     // If someone calls .backward() on a leaf, it's simple...
-    if (variable->creator == NULL) {
-      if (variable->requires_grad) {
+    if (variable->cdata->creator == NULL) {
+      if (variable->cdata->requires_grad) {
         THPObjectPtr result = PyObject_CallMethod((PyObject*)variable,
                 "_do_backward", "(O)O", grad, retain_variables_obj);
         if (!result) return NULL;
@@ -158,13 +158,13 @@ PyObject *THPEngine_run_backward(THPEngine *self, PyObject *args, PyObject *kwar
       }
       continue;
     }
-    THPFunction *creator = (THPFunction*)variable->creator;
+    THPFunction *creator = (THPFunction*)variable->cdata->creator;
     creators.push_back(creator);
     // Initialize the queue
     if (creator->requires_grad) {
       grad_buffer_type buf(next_buf_id++, creator->num_outputs);
       Py_INCREF(grad);
-      buf[variable->output_nr] = grad;
+      buf[variable->cdata->output_nr] = grad;
       ready.emplace_front(creator, std::move(buf));
     }
   }
@@ -213,7 +213,7 @@ PyObject *THPEngine_run_backward(THPEngine *self, PyObject *args, PyObject *kwar
       // FIXME: this might call leaf variable hooks multiple times
       if (THPVariable_Check(prev_obj)) {
         THPVariable *prev_var = (THPVariable*)prev_obj;
-        if (prev_var->requires_grad) {
+        if (prev_var->cdata->requires_grad) {
           THPObjectPtr ret = PyObject_CallMethod(prev_obj, "_do_backward",
               "(O)O", grad_prev, retain_variables_obj);
           if (!ret) return NULL;
