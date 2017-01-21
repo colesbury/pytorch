@@ -137,6 +137,8 @@ public:
   virtual THCTensor& zero() override;
 
   virtual thpp::Type type() const override;
+  virtual bool isCuda() const override;
+  virtual int getDevice() const override;
   virtual std::unique_ptr<Tensor> newTensor() const override;
 
 private:

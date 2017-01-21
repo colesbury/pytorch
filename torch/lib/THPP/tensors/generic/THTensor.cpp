@@ -599,6 +599,16 @@ thpp::Type THTensor<real>::type() const {
 }
 
 template<>
+bool THTensor<real>::isCuda() const {
+  return false;
+}
+
+template<>
+int THTensor<real>::getDevice() const {
+  return -1;
+}
+
+template<>
 std::unique_ptr<Tensor> THTensor<real>::newTensor() const {
   return std::unique_ptr<Tensor>(new THTensor<real>());
 }

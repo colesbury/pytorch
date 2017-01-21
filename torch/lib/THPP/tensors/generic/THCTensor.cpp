@@ -595,6 +595,16 @@ thpp::Type THCTensor<real>::type() const {
 }
 
 template<>
+bool THCTensor<real>::isCuda() const {
+  return true;
+}
+
+template<>
+int THCTensor<real>::getDevice() const {
+  return tensor->storage->device;
+}
+
+template<>
 std::unique_ptr<Tensor> THCTensor<real>::newTensor() const {
   return std::unique_ptr<Tensor>(new THCTensor<real>(state));
 }
