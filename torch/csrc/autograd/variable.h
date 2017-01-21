@@ -3,6 +3,7 @@
 
 #include <THPP/THPP.h>
 #include <THPP/Tensor.hpp>
+#include <memory>
 #include "torch/csrc/Types.h"
 
 
@@ -50,12 +51,17 @@ struct THPVariableVersion {
   bool saved_ref;
 };
 
+namespace torch { namespace autograd {
+
+struct Function;
+
+}}
+
 struct THVariable {
-  int refcount;
   thpp::TensorType tensor_type;
   std::unique_ptr<thpp::Tensor> data;
-  PyObject *creator;
-  THVariable *grad;
+  std::shared_ptr<torch::autograd::Function> creator;
+  std::shared_ptr<THVariable> grad;
   std::unique_ptr<THPVariableVersion> version_counter;
   int output_nr;
   char is_volatile;
@@ -64,17 +70,14 @@ struct THVariable {
   PyObject *pyobj;  // weak reference
 
   THVariable(thpp::TensorType tensor_type, std::unique_ptr<thpp::Tensor> data, char requires_grad, char is_volatile);
-  ~THVariable();
 
-  void free();
-  void retain();
   bool is_cuda();
   bool is_sparse();
 };
 
 struct THPVariable {
     PyObject_HEAD
-    THVariable *cdata;
+    std::shared_ptr<THVariable> *cdata;
 };
 
 bool THPVariable_initModule(PyObject *module);
@@ -82,7 +85,7 @@ extern PyObject *THPVariableClass;
 PyObject * THPVariable_NewVolatile(PyObject *data);
 PyObject * THPVariable_New(PyObject *data, PyObject *creator, char requires_grad, char is_volatile=0);
 
-PyObject* THVariable_get_data(THVariable* var);
+PyObject* THVariable_get_data(const THVariable& var);
 PyObject * THPVariable_get_data(THPVariable *self);
 
 inline bool THPVariable_Check(PyObject *obj)

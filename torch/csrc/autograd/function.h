@@ -31,8 +31,8 @@ struct ExecutionContext {
 };
 
 struct Function {
-  using variable_list = std::vector<THVariable*>;
-  using function_list = std::vector<Function*>;
+  using variable_list = std::vector<std::shared_ptr<THVariable>>;
+  using function_list = std::vector<std::shared_ptr<Function>>;
 
   Function() {};
   Function(const Function& other) = delete;
@@ -41,11 +41,12 @@ struct Function {
 
   // virtual void forward(const variable_list& inputs) = 0;
   virtual variable_list backward(const variable_list& gradOutputs, bool retain_variables) = 0;
+  virtual PyObject* pythonObject() = 0;
 
-  virtual function_list& previousFunctions();
-  virtual int numInputs();
-  virtual int numOutputs();
-  virtual bool requiresGrad();
+  // virtual function_list& previousFunctions();
+  // virtual int numInputs();
+  // virtual int numOutputs();
+  // virtual bool requiresGrad();
 };
 
 struct PyFunctionWrapper : public Function {
@@ -54,6 +55,7 @@ struct PyFunctionWrapper : public Function {
 
   // virtual void forward(const variable_list& inputs) override;
   virtual variable_list backward(const variable_list& gradOutputs, bool retain_variables) override;
+  virtual PyObject* pythonObject() override;
 
 private:
   THPObjectPtr pyobj;
@@ -81,6 +83,8 @@ struct THPFunction {
     PyObject *non_differentiable;
     PyObject *dirty_tensors;
 
+    std::weak_ptr<torch::autograd::PyFunctionWrapper>* wrapper;  // WEAK
+
     THPFunctionPtr *previous_functions;
     std::vector<output_info_type> *output_info;
     std::vector<saved_var_info_type> *saved_variables;
@@ -93,6 +97,8 @@ struct THPFunction {
 bool THPFunction_initModule(PyObject *module);
 extern PyObject *THPFunctionClass;
 extern PyObject *THPStochasticFunctionClass;
+
+std::shared_ptr<torch::autograd::PyFunctionWrapper> THPFunction_asFunction(THPFunction* self);
 
 #define THPFunction_Check(obj) PyObject_IsInstance(obj, THPFunctionClass)
 
