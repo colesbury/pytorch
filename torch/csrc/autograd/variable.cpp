@@ -39,7 +39,7 @@ void THVariable::retain()
 
 bool THVariable::is_cuda()
 {
-  return tensor_type.is_cuda;
+  return data->isCuda();
 }
 
 

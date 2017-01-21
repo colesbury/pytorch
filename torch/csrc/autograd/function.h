@@ -24,6 +24,40 @@ struct THPFunctionPtr: public THPObjectPtr {
     int output_nr;
 };
 
+namespace torch { namespace autograd {
+
+struct Function {
+  using variable_list = std::vector<THVariable*>;
+  using function_list = std::vector<Function*>;
+
+  Function() {};
+  Function(const Function& other) = delete;
+  Function(Function&& other) = delete;
+  virtual ~Function() {};
+
+  virtual void forward(const variable_list& inputs) = 0;
+  virtual variable_list backward(const variable_list& gradOutputs) = 0;
+
+  virtual function_list& getPreviousFunctions();
+
+  int num_inputs;
+  int num_outputs;
+  bool requires_grad;
+};
+
+struct PyAutogradFunction : public Function {
+  PyAutogradFunction();
+  virtual ~PyAutogradFunction();
+
+  virtual void forward(const variable_list& inputs) override;
+  virtual variable_list backward(const variable_list& gradOutputs) override;
+
+private:
+  PyObject* weakref;
+};
+
+}} // namespace torch::autograd
+
 // (class, gpu id, sizes)
 using output_info_type = std::tuple<PyObject *, int, std::vector<long>>;
 // (tensor, version when saved, version counter)
