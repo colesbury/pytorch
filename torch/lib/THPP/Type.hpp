@@ -46,7 +46,7 @@ struct TensorType {
 };
 
 inline bool isFloat(Type t) {
-  return (t == Type::FLOAT || t == Type::DOUBLE);
+  return (t == Type::FLOAT || t == Type::DOUBLE || t == Type::HALF);
 }
 
 inline bool isObject(Type t) {
