@@ -158,15 +158,20 @@ PyObject *THPVariable_get_creator(THPVariable *self)
   return creator;
 }
 
-PyObject * THPVariable_get_data(THPVariable *self)
+PyObject* THVariable_get_data(THVariable* var)
 {
-  auto& data = *self->cdata->data;
-  PyTypeObject* type = getPyTypeObject(self->cdata->tensor_type);
+  auto& data = *var->data;
+  PyTypeObject* type = getPyTypeObject(var->tensor_type);
   PyObject *obj = type->tp_alloc(type, 0);
   if (obj) {
     ((THPVoidTensor*)obj)->cdata = (THVoidTensor *)data.retain().cdata();
   }
   return obj;
+}
+
+PyObject * THPVariable_get_data(THPVariable *self)
+{
+  return THVariable_get_data(self->cdata);
 }
 
 int THPVariable_set_data(THPVariable *self, PyObject *data)

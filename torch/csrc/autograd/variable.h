@@ -82,6 +82,7 @@ extern PyObject *THPVariableClass;
 PyObject * THPVariable_NewVolatile(PyObject *data);
 PyObject * THPVariable_New(PyObject *data, PyObject *creator, char requires_grad, char is_volatile=0);
 
+PyObject* THVariable_get_data(THVariable* var);
 PyObject * THPVariable_get_data(THPVariable *self);
 
 inline bool THPVariable_Check(PyObject *obj)

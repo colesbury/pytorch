@@ -13,6 +13,7 @@
 #endif
 
 using namespace torch;
+using namespace torch::autograd;
 
 // Throwing this exception means that the python error flags have been already
 // set and control should be immediately returned to the interpreter.
@@ -926,3 +927,45 @@ bool THPFunction_initModule(PyObject *module)
   PyModule_AddObject(module, "_FunctionBase", (PyObject *)&THPFunctionType);
   return true;
 }
+
+
+namespace torch { namespace autograd {
+
+PyFunctionWrapper::PyFunctionWrapper(PyObject* obj) : pyobj(obj)
+  {}
+
+auto PyFunctionWrapper::backward(const variable_list& gradOutputs, bool retain_variables) -> variable_list {
+  // FIXME acquire GIL
+  THPObjectPtr args = PyTuple_New(2);
+  if (!args) throw python_error();
+
+  THPObjectPtr pyGradOutputs = PyTuple_New(gradOutputs.size());
+  if (!pyGradOutputs) throw python_error();
+
+  for (size_t i = 0; i != gradOutputs.size(); ++i) {
+    PyObject* obj = THVariable_get_data(gradOutputs[i]);
+    if (!obj) throw python_error();
+    PyTuple_SET_ITEM(pyGradOutputs.get(), i, obj);
+  }
+
+  PyTuple_SET_ITEM(args.get(), 0, pyGradOutputs.release());
+  PyTuple_SET_ITEM(args.get(), 1, PyBool_FromLong(retain_variables));
+
+  PyObject* r = THPFunction_do_backward((THPFunction*)pyobj.get(), args.get());
+  if (!r) throw python_error();
+
+  auto num_outputs = PyTuple_GET_SIZE(r);
+  variable_list results(num_outputs);
+  for (int i = 0; i != num_outputs; ++i) {
+    PyObject* obj = PyTuple_GET_ITEM(r, i);
+    if (!THPVariable_Check(obj)) throw std::runtime_error("expected Variable");
+    auto var = ((THPVariable*)obj)->cdata;
+    var->retain();
+    results[i] = var;
+  }
+  // FIXME release GIL
+  return results;
+}
+
+
+}} // namespace torch::autograd

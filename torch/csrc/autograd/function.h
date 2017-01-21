@@ -26,6 +26,10 @@ struct THPFunctionPtr: public THPObjectPtr {
 
 namespace torch { namespace autograd {
 
+struct ExecutionContext {
+  PyThreadState* thread_state;
+};
+
 struct Function {
   using variable_list = std::vector<THVariable*>;
   using function_list = std::vector<Function*>;
@@ -35,26 +39,26 @@ struct Function {
   Function(Function&& other) = delete;
   virtual ~Function() {};
 
-  virtual void forward(const variable_list& inputs) = 0;
-  virtual variable_list backward(const variable_list& gradOutputs) = 0;
+  // virtual void forward(const variable_list& inputs) = 0;
+  virtual variable_list backward(const variable_list& gradOutputs, bool retain_variables) = 0;
 
-  virtual function_list& getPreviousFunctions();
-
-  int num_inputs;
-  int num_outputs;
-  bool requires_grad;
+  virtual function_list& previousFunctions();
+  virtual int numInputs();
+  virtual int numOutputs();
+  virtual bool requiresGrad();
 };
 
-struct PyAutogradFunction : public Function {
-  PyAutogradFunction();
-  virtual ~PyAutogradFunction();
+struct PyFunctionWrapper : public Function {
+  PyFunctionWrapper(PyObject *obj);
+  virtual ~PyFunctionWrapper();
 
-  virtual void forward(const variable_list& inputs) override;
-  virtual variable_list backward(const variable_list& gradOutputs) override;
+  // virtual void forward(const variable_list& inputs) override;
+  virtual variable_list backward(const variable_list& gradOutputs, bool retain_variables) override;
 
 private:
-  PyObject* weakref;
+  THPObjectPtr pyobj;
 };
+
 
 }} // namespace torch::autograd
 
