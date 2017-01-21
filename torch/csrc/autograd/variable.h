@@ -52,8 +52,8 @@ struct THPVariableVersion {
 
 struct THVariable {
   int refcount;
-  size_t data_type;
-  thpp::Tensor *data;
+  thpp::TensorType tensor_type;
+  std::unique_ptr<thpp::Tensor> data;
   PyObject *creator;
   THVariable *grad;
   std::unique_ptr<THPVariableVersion> version_counter;
@@ -63,12 +63,11 @@ struct THVariable {
   PyObject *backward_hooks;
   PyObject *pyobj;  // weak reference
 
-  THVariable(thpp::Tensor *data, char requires_grad, char is_volatile);
+  THVariable(thpp::TensorType tensor_type, std::unique_ptr<thpp::Tensor> data, char requires_grad, char is_volatile);
   ~THVariable();
 
   void free();
   void retain();
-  void set_data(thpp::Tensor *data);
   bool is_cuda();
   bool is_sparse();
 };

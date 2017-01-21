@@ -215,14 +215,14 @@ static void _wrap_outputs(THPFunction *self, t2var_type &t2var,
     }
     if (!output_var) throw python_error();
 
-    THVoidTensor *output_tensor = (THVoidTensor*)output_var->cdata->data->data();
+    THVoidTensor *output_tensor = (THVoidTensor*)output_var->cdata->data->cdata();
     long ndim = output_tensor->nDimension;
     int device_id = -1;
     if (output_var->cdata->is_cuda()) {
       device_id = output_tensor->storage->device;
     }
     output_info[i] = std::make_tuple(
-      getTHPTensorClass(output_var->cdata->data_type),
+      (PyObject *)getPyTypeObject(output_var->cdata->tensor_type),
       device_id,
       std::vector<long>(output_tensor->size, output_tensor->size + ndim)
     );
@@ -494,7 +494,7 @@ static void _ensure_correct_hook_result_single(PyObject *original,
   THPVariable *returned_var = (THPVariable*)returned;
   // Check that the type matches
   if(Py_TYPE(original) != Py_TYPE(returned) ||
-      Py_TYPE(original_var->cdata->data_type) != Py_TYPE(returned_var->cdata->data_type)) {
+      original_var->cdata->tensor_type != returned_var->cdata->tensor_type) {
     char *hook_name = _try_get_name(hook, tmp);
     THPUtils_setError("backward hook %s%s%shas changed the type of "
         "grad_input (was %s, but got %s)",

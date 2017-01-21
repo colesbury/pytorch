@@ -12,28 +12,17 @@ using namespace thpp;
 
 PyObject *THPVariableClass = NULL;
 
-THVariable::THVariable(Tensor *data, char requires_grad, char is_volatile)
-    : refcount(1), data_type(data_type), data(data), creator(nullptr), grad(nullptr),
+THVariable::THVariable(thpp::TensorType tensor_type, std::unique_ptr<thpp::Tensor> data, char requires_grad, char is_volatile)
+    : refcount(1), tensor_type(tensor_type), data(std::move(data)),
+      creator(nullptr), grad(nullptr),
       version_counter(new THPVariableVersion()), output_nr(0),
       is_volatile(is_volatile), requires_grad(requires_grad),
       backward_hooks(nullptr), pyobj(nullptr)
 {
-  data->retain();
 }
 
 THVariable::~THVariable()
 {
-  data->free();
-}
-
-void THVariable::set_data(Tensor *new_data)
-{
-  if (!new_data) throw std::runtime_error("new_data is null");
-  if (new_data != data) {
-    new_data->retain();
-    data->free();
-    data = new_data;
-  }
 }
 
 void THVariable::free()
@@ -50,7 +39,7 @@ void THVariable::retain()
 
 bool THVariable::is_cuda()
 {
-  return false; //FIXME
+  return tensor_type.is_cuda;
 }
 
 
@@ -69,11 +58,39 @@ PyObject * THPVariable_Wrap(THVariable *var)
   return var->pyobj;
 }
 
-static Tensor* make_me_a_tensor(PyObject *data)
-{
-  return nullptr;
+static std::unique_ptr<Tensor> createTensor(TensorType tensor_type, PyObject *data) {
+  auto type = tensor_type.data_type;
+  if (type == Type::UCHAR) {
+    auto tensor = ((THPByteTensor*)data)->cdata;
+    THByteTensor_retain(tensor);
+    return std::unique_ptr<Tensor>(new THTensor<unsigned char>(tensor));
+  } else if (type == Type::CHAR) {
+    auto tensor = ((THPCharTensor*)data)->cdata;
+    THCharTensor_retain(tensor);
+    return std::unique_ptr<Tensor>(new THTensor<char>(tensor));
+  } else if (type == Type::SHORT) {
+    auto tensor = ((THPShortTensor*)data)->cdata;
+    THShortTensor_retain(tensor);
+    return std::unique_ptr<Tensor>(new THTensor<short>(tensor));
+  } else if (type == Type::INT) {
+    auto tensor = ((THPIntTensor*)data)->cdata;
+    THIntTensor_retain(tensor);
+    return std::unique_ptr<Tensor>(new THTensor<int>(tensor));
+  } else if (type == Type::LONG) {
+    auto tensor = ((THPLongTensor*)data)->cdata;
+    THLongTensor_retain(tensor);
+    return std::unique_ptr<Tensor>(new THTensor<long>(tensor));
+  } else if (type == Type::FLOAT) {
+    auto tensor = ((THPFloatTensor*)data)->cdata;
+    THFloatTensor_retain(tensor);
+    return std::unique_ptr<Tensor>(new THTensor<float>(tensor));
+  } else if (type == Type::DOUBLE) {
+    auto tensor = ((THPDoubleTensor*)data)->cdata;
+    THDoubleTensor_retain(tensor);
+    return std::unique_ptr<Tensor>(new THTensor<double>(tensor));
+  }
+  throw std::invalid_argument("passed character doesn't represent a tensor type");
 }
-
 
 // This function DOES NOT steal a reference to data and creator
 // To create a leaf Variable pass NULL as creator.
@@ -83,10 +100,11 @@ PyObject * THPVariable_New(PyObject *data, PyObject *creator, char requires_grad
   PyTypeObject *type = (PyTypeObject *)THPVariableClass;
   PyObject *obj = type->tp_alloc(type, 0);
   if (obj) {
-    Tensor *tensor = nullptr ; // FIXME ((THPVoidTensor *)data)->cdata;
-    ((THPVariable *)obj)->cdata = new THVariable(tensor, requires_grad, is_volatile);
-    ((THPVariable *)obj)->cdata->creator = creator;
-    ((THPVariable *)obj)->cdata->pyobj = obj;
+    auto var = (THPVariable*) obj;
+    auto tensor_type = getTensorType(Py_TYPE(data));
+    var->cdata = new THVariable(tensor_type, createTensor(tensor_type, data), requires_grad, is_volatile);
+    var->cdata->creator = creator;
+    var->cdata->pyobj = obj;
     Py_XINCREF(creator);
   }
   return obj;
@@ -169,17 +187,46 @@ PyObject *THPVariable_get_creator(THPVariable *self)
 
 PyObject * THPVariable_get_data(THPVariable *self)
 {
-  THVariable *var = self->cdata;
-  var->data->retain();
-  return nullptr; // FIXME
-  // return THPVoidTensor_New(var->data_type, var->data);
+  auto& data = *self->cdata->data;
+  PyTypeObject* type = getPyTypeObject(self->cdata->tensor_type);
+  PyObject *obj = type->tp_alloc(type, 0);
+  if (obj) {
+    ((THPVoidTensor*)obj)->cdata = (THVoidTensor *)data.retain().cdata();
+  }
+  return obj;
 }
 
 int THPVariable_set_data(THPVariable *self, PyObject *data)
 {
   THPUtils_assertRet(-1, THPModule_isTensor(data), "Variable data has to "
       "be a tensor, but got %s", THPUtils_typename(data));
-  //FIXME self->cdata->set_data(((THPVoidTensor *)data)->cdata);
+  auto tensor = createTensor(getTensorType(Py_TYPE(data)), data);
+  self->cdata->data.swap(tensor);
+  return 0;
+}
+
+PyObject *THPVariable_get_raw_grad(THPVariable *self)
+{
+  THVariable *var = self->cdata;
+  if (!var->grad) {
+    Py_RETURN_NONE;
+  }
+  return THPVariable_Wrap(var->grad);
+}
+
+int THPVariable_set_raw_grad(THPVariable *self, PyObject *data)
+{
+  THVariable* grad = nullptr;
+  if (data != Py_None) {
+    THPUtils_assertRet(-1, THPVariable_Check(data),
+        "expected Variable or None (got %s)", THPUtils_typename(data));
+    grad = ((THPVariable*)data)->cdata;
+    grad->retain();
+  }
+  if (self->cdata->grad) {
+    self->cdata->grad->free();
+  }
+  self->cdata->grad = grad;
   return 0;
 }
 
@@ -187,13 +234,9 @@ PyObject *THPVariable_get_grad(THPVariable *self)
 {
   THVariable *var = self->cdata;
   if (!var->grad) {
-    // auto grad_data = v
-    // FIXME
-    // THLongStoragePtr size = THVoidTensor_newSizeOf(data_type, var->data);
-    // THVoidTensor* grad_data = THVoidTensor_newWithSize(data_type, size);
-    // // TODO: error?
-    // var->grad = new THVariable(data_type, grad_data, 0, 1);
-    // THVoidTensor_free(data_type, grad_data);
+    auto grad = var->data->newTensor();
+    grad->resizeAs(*var->data).zero();
+    var->grad = new THVariable(var->tensor_type, std::move(grad), 0, 1);
   }
   return THPVariable_Wrap(var->grad);
 }
@@ -246,15 +289,24 @@ PyObject *THPVariable_get_backwards_hooks(THPVariable *self)
   Py_RETURN_NONE;
 }
 
+int THPVariable_set_backwards_hooks(THPVariable *self, PyObject *obj)
+{
+  Py_INCREF(obj);
+  Py_XDECREF(self->cdata->backward_hooks);
+  self->cdata->backward_hooks = obj;
+  return 0;
+}
+
 static struct PyGetSetDef THPVariable_properties[] = {
   {"_version", (getter)THPVariable_get_version, NULL, NULL, NULL},
   {"creator", (getter)THPVariable_get_creator, NULL, NULL, NULL},
   {"data", (getter)THPVariable_get_data, (setter)THPVariable_set_data, NULL, NULL},
+  {"_grad", (getter)THPVariable_get_raw_grad, (setter)THPVariable_set_raw_grad, NULL, NULL},
   {"grad", (getter)THPVariable_get_grad, NULL, NULL, NULL},
   {"volatile", (getter)THPVariable_get_volatile, (setter)THPVariable_set_volatile, NULL, NULL},
   {"output_nr", (getter)THPVariable_get_output_nr, NULL, NULL, NULL},
   {"requires_grad", (getter)THPVariable_get_requires_grad, (setter)THPVariable_set_requires_grad, NULL, NULL},
-  {"_backward_hooks", (getter)THPVariable_get_backwards_hooks, NULL, NULL, NULL},
+  {"_backward_hooks", (getter)THPVariable_get_backwards_hooks, (setter)THPVariable_set_backwards_hooks, NULL, NULL},
   {NULL}
 };
 

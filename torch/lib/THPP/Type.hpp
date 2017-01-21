@@ -27,10 +27,22 @@ enum class Type : char {
   STORAGE = 'S',
 };
 
-class TensorType {
+struct TensorType {
   Type data_type;
   bool is_cuda;
   bool is_sparse;
+
+  friend bool operator==(const TensorType &t1, const TensorType &t2)
+  {
+    return (t1.data_type == t2.data_type &&
+            t1.is_cuda == t2.is_cuda &&
+            t1.is_sparse == t2.is_sparse);
+  }
+
+  friend bool operator!=(const TensorType &t1, const TensorType &t2)
+  {
+    return !(t1 == t2);
+  }
 };
 
 inline bool isFloat(Type t) {

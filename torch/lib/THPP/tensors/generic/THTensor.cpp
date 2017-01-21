@@ -588,6 +588,12 @@ auto THTensor<real>::cminValue(const Tensor& src, scalar_type value) -> THTensor
 }
 
 template<>
+auto THTensor<real>::zero() -> THTensor& {
+  THTensor_(zero)(tensor);
+  return *this;
+}
+
+template<>
 thpp::Type THTensor<real>::type() const {
   return thpp::type_traits<real>::type;
 }

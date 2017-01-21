@@ -741,14 +741,15 @@ class Variable(_C._VariableBase):
     def __iter__(self):
         return iter(map(lambda i: self[i], range(self.size(0))))
 
-    def __getstate__(self):
-        return (self.data, self.grad, self.backward_hooks, self.requires_grad,
-                self.volatile)
-
     def __setstate__(self, state):
         if self.creator is not None:
             raise RuntimeError('__setstate__ can be only called on leaf variables')
-        self.data, self.grad, self.backward_hooks, self.requires_grad, self.volatile = state
+        self._grad, self._backward_hooks = state
+
+    def __reduce_ex__(self, protocol):
+        newargs = (self.data, None, self.volatile, self.requires_grad)
+        state = (self._grad, self._backward_hooks)
+        return Variable, newargs, state
 
     class _torch(object):
 

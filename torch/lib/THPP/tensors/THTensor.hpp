@@ -133,6 +133,7 @@ public:
   virtual THTensor& cmin(const Tensor& src1, const Tensor& src2) override;
   virtual THTensor& cmaxValue(const Tensor& src, scalar_type value) override;
   virtual THTensor& cminValue(const Tensor& src, scalar_type value) override;
+  virtual THTensor& zero() override;
 
   virtual thpp::Type type() const override;
   virtual std::unique_ptr<Tensor> newTensor() const override;

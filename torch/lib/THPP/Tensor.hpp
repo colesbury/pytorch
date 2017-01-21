@@ -81,6 +81,7 @@ struct Tensor {
   virtual Tensor& cross(const Tensor& src1, const Tensor& src2, int dimension) = 0;
   virtual Tensor& cmax(const Tensor& src1, const Tensor& src2) = 0;
   virtual Tensor& cmin(const Tensor& src1, const Tensor& src2) = 0;
+  virtual Tensor& zero() = 0;
 
   virtual thpp::Type type() const = 0;
   virtual std::unique_ptr<Tensor> newTensor() const = 0;
