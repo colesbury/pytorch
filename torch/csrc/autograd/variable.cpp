@@ -3,7 +3,7 @@
 
 #include "THP.h"
 #include "torch/csrc/DynamicTypes.h"
-#include <THPP/tensors/THTensor.hpp>
+#include "torch/csrc/cuda/AutoGPU.h"
 
 
 using namespace torch;
@@ -58,39 +58,21 @@ PyObject * THPVariable_Wrap(THVariable *var)
   return var->pyobj;
 }
 
-static std::unique_ptr<Tensor> createTensor(TensorType tensor_type, PyObject *data) {
-  auto type = tensor_type.data_type;
-  if (type == Type::UCHAR) {
-    auto tensor = ((THPByteTensor*)data)->cdata;
-    THByteTensor_retain(tensor);
-    return std::unique_ptr<Tensor>(new THTensor<unsigned char>(tensor));
-  } else if (type == Type::CHAR) {
-    auto tensor = ((THPCharTensor*)data)->cdata;
-    THCharTensor_retain(tensor);
-    return std::unique_ptr<Tensor>(new THTensor<char>(tensor));
-  } else if (type == Type::SHORT) {
-    auto tensor = ((THPShortTensor*)data)->cdata;
-    THShortTensor_retain(tensor);
-    return std::unique_ptr<Tensor>(new THTensor<short>(tensor));
-  } else if (type == Type::INT) {
-    auto tensor = ((THPIntTensor*)data)->cdata;
-    THIntTensor_retain(tensor);
-    return std::unique_ptr<Tensor>(new THTensor<int>(tensor));
-  } else if (type == Type::LONG) {
-    auto tensor = ((THPLongTensor*)data)->cdata;
-    THLongTensor_retain(tensor);
-    return std::unique_ptr<Tensor>(new THTensor<long>(tensor));
-  } else if (type == Type::FLOAT) {
-    auto tensor = ((THPFloatTensor*)data)->cdata;
-    THFloatTensor_retain(tensor);
-    return std::unique_ptr<Tensor>(new THTensor<float>(tensor));
-  } else if (type == Type::DOUBLE) {
-    auto tensor = ((THPDoubleTensor*)data)->cdata;
-    THDoubleTensor_retain(tensor);
-    return std::unique_ptr<Tensor>(new THTensor<double>(tensor));
+PyObject * THPVariable_New2(PyTypeObject *type, PyObject *data, PyObject *creator, char requires_grad, char is_volatile)
+{
+  THPUtils_assert(THPModule_isTensor(data), "data must be a Tensor");
+  PyObject *obj = type->tp_alloc(type, 0);
+  if (obj) {
+    auto var = (THPVariable*) obj;
+    auto tensor_type = getTensorType(Py_TYPE(data));
+    var->cdata = new THVariable(tensor_type, createTensor(data), requires_grad, is_volatile);
+    var->cdata->creator = creator;
+    var->cdata->pyobj = obj;
+    Py_XINCREF(creator);
   }
-  throw std::invalid_argument("passed character doesn't represent a tensor type");
+  return obj;
 }
+
 
 // This function DOES NOT steal a reference to data and creator
 // To create a leaf Variable pass NULL as creator.
@@ -98,16 +80,7 @@ PyObject * THPVariable_New(PyObject *data, PyObject *creator, char requires_grad
 {
   THPUtils_assert(THPModule_isTensor(data), "data must be a Tensor");
   PyTypeObject *type = (PyTypeObject *)THPVariableClass;
-  PyObject *obj = type->tp_alloc(type, 0);
-  if (obj) {
-    auto var = (THPVariable*) obj;
-    auto tensor_type = getTensorType(Py_TYPE(data));
-    var->cdata = new THVariable(tensor_type, createTensor(tensor_type, data), requires_grad, is_volatile);
-    var->cdata->creator = creator;
-    var->cdata->pyobj = obj;
-    Py_XINCREF(creator);
-  }
-  return obj;
+  return THPVariable_New2(type, data, creator, requires_grad, is_volatile);
 }
 
 // This function DOES NOT steal a reference to data
@@ -164,7 +137,7 @@ PyObject *THPVariable_pynew(PyTypeObject *type, PyObject *args, PyObject *kwargs
   THPUtils_assert(THPModule_isTensor(data), "Variable data has to "
           "be a tensor, but got %s", THPUtils_typename(data));
 
-  return THPVariable_New(data, creator, requires_grad, is_volatile);
+  return THPVariable_New2(type, data, creator, requires_grad, is_volatile);
 }
 
 typedef PyObject *(*getter)(PyObject *, void *);
@@ -200,8 +173,9 @@ int THPVariable_set_data(THPVariable *self, PyObject *data)
 {
   THPUtils_assertRet(-1, THPModule_isTensor(data), "Variable data has to "
       "be a tensor, but got %s", THPUtils_typename(data));
-  auto tensor = createTensor(getTensorType(Py_TYPE(data)), data);
+  auto tensor = createTensor(data);
   self->cdata->data.swap(tensor);
+  self->cdata->tensor_type = getTensorType(Py_TYPE(data));
   return 0;
 }
 
@@ -234,6 +208,7 @@ PyObject *THPVariable_get_grad(THPVariable *self)
 {
   THVariable *var = self->cdata;
   if (!var->grad) {
+    THCPAutoGPU __guard(var->data->getDevice());
     auto grad = var->data->newTensor();
     grad->resizeAs(*var->data).zero();
     var->grad = new THVariable(var->tensor_type, std::move(grad), 0, 1);

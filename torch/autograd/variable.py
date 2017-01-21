@@ -114,13 +114,15 @@ class Variable(_C._VariableBase):
         return result
 
     def __reduce_ex__(self, proto):
-        if proto > 1:
-            return super(Variable, self).__reduce_ex__(proto)
-        if sys.version_info[0] == 2:
-            from copy_reg import __newobj__
-        else:
-            from copyreg import __newobj__
-        return __newobj__, (type(self),), self.__getstate__()
+        newargs = (self.data, None, self.volatile, self.requires_grad)
+        state = (self._grad, self._backward_hooks)
+        return type(self), newargs, state
+        # if proto > 1:
+        # if sys.version_info[0] == 2:
+        #     from copy_reg import __newobj__
+        # else:
+        #     from copyreg import __newobj__
+        # return __newobj__, (type(self),), self.__getstate__()
 
     def __repr__(self):
         return 'Variable containing:' + self.data.__repr__()
@@ -745,11 +747,6 @@ class Variable(_C._VariableBase):
         if self.creator is not None:
             raise RuntimeError('__setstate__ can be only called on leaf variables')
         self._grad, self._backward_hooks = state
-
-    def __reduce_ex__(self, protocol):
-        newargs = (self.data, None, self.volatile, self.requires_grad)
-        state = (self._grad, self._backward_hooks)
-        return Variable, newargs, state
 
     class _torch(object):
 
