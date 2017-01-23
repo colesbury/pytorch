@@ -111,4 +111,19 @@ std::unique_ptr<Tensor> createTensor(PyObject *data)
   return wrapper;
 }
 
+PyObject* createPyObject(const thpp::Tensor& tensor)
+{
+  TensorType tensor_type;
+  tensor_type.data_type = tensor.type();
+  tensor_type.is_cuda = tensor.isCuda();
+  tensor_type.is_sparse = false;
+
+  auto type = getPyTypeObject(tensor_type);
+  PyObject *obj = type->tp_alloc(type, 0);
+  if (obj) {
+    ((THPVoidTensor*)obj)->cdata = (THVoidTensor *)const_cast<thpp::Tensor&>(tensor).retain().cdata();
+  }
+  return obj;
+}
+
 }  // namespace

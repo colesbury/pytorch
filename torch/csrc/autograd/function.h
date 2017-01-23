@@ -3,6 +3,8 @@
 
 struct THPFunction;
 
+class python_error : public std::exception {};
+
 struct THPFunctionPtr: public THPObjectPtr {
     THPFunctionPtr(): THPObjectPtr(nullptr), output_nr(-1) {};
 
@@ -24,6 +26,13 @@ struct THPFunctionPtr: public THPObjectPtr {
     int output_nr;
 };
 
+struct THPVariableVersion;
+struct THVariable;
+
+namespace thpp {
+  struct Tensor;
+}
+
 namespace torch { namespace autograd {
 
 struct ExecutionContext {
@@ -31,8 +40,9 @@ struct ExecutionContext {
 };
 
 struct Function {
+  using tensor_list = std::vector<std::unique_ptr<thpp::Tensor>>;
   using variable_list = std::vector<std::shared_ptr<THVariable>>;
-  using function_list = std::vector<std::shared_ptr<Function>>;
+  using function_list = std::vector<std::pair<std::shared_ptr<Function>, int>>;
 
   Function() {};
   Function(const Function& other) = delete;
@@ -40,22 +50,28 @@ struct Function {
   virtual ~Function() {};
 
   // virtual void forward(const variable_list& inputs) = 0;
-  virtual variable_list backward(const variable_list& gradOutputs, bool retain_variables) = 0;
+  virtual tensor_list backward(const tensor_list& gradOutputs, bool retain_variables) = 0;
   virtual PyObject* pythonObject() = 0;
 
-  // virtual function_list& previousFunctions();
-  // virtual int numInputs();
-  // virtual int numOutputs();
-  // virtual bool requiresGrad();
+  virtual function_list previousFunctions() = 0;
+  virtual int numInputs() const = 0;
+  virtual int numOutputs() const = 0;
+  virtual bool requiresGrad() const = 0;
+  virtual bool isStochastic() const = 0;
 };
 
 struct PyFunctionWrapper : public Function {
   PyFunctionWrapper(PyObject *obj);
   virtual ~PyFunctionWrapper();
 
-  // virtual void forward(const variable_list& inputs) override;
-  virtual variable_list backward(const variable_list& gradOutputs, bool retain_variables) override;
+  virtual tensor_list backward(const tensor_list& gradOutputs, bool retain_variables) override;
   virtual PyObject* pythonObject() override;
+
+  virtual function_list previousFunctions() override;
+  virtual int numInputs() const override;
+  virtual int numOutputs() const override;
+  virtual bool requiresGrad() const override;
+  virtual bool isStochastic() const override;
 
 private:
   THPObjectPtr pyobj;

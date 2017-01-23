@@ -26,7 +26,6 @@ bool THVariable::is_cuda()
   return data->isCuda();
 }
 
-
 PyObject * THPVariable_Wrap(std::shared_ptr<THVariable>& var)
 {
   if (var->pyobj) {
@@ -51,7 +50,7 @@ PyObject * THPVariable_New2(PyTypeObject *type, PyObject *data, PyObject *creato
     auto tensor_type = getTensorType(Py_TYPE(data));
     auto ptr = std::make_shared<THVariable>(tensor_type, createTensor(data), requires_grad, is_volatile);
     if (creator) {
-      ptr->creator = THPFunction_asFunction((THPFunction*)creator);      
+      ptr->creator = THPFunction_asFunction((THPFunction*)creator);
     }
     ptr->pyobj = obj;
     var->cdata = new std::shared_ptr<THVariable>(ptr);
@@ -334,4 +333,66 @@ bool THPVariable_initModule(PyObject *module)
   Py_INCREF(&THPVariableType);
   PyModule_AddObject(module, "_VariableBase", (PyObject *)&THPVariableType);
   return true;
+}
+
+auto THVariable::backward(const Tensor& _gradOutput) -> void {
+  std::unique_ptr<Tensor> modified_grad;
+  const Tensor* gradOutput = &_gradOutput;
+  if (backward_hooks) {
+    // FIXME: GIL
+    THPObjectPtr grad = createPyObject(*gradOutput);
+    if (!grad) throw python_error();
+
+    PyObject *key, *value;
+    Py_ssize_t pos = 0;
+    while (PyDict_Next(backward_hooks, &pos, &key, &value)) {
+      THPObjectPtr res = PyObject_CallFunctionObjArgs(value, grad.get(), nullptr);
+      if (!res) throw python_error();
+      grad = std::move(res);
+    }
+
+    modified_grad = std::move(createTensor(grad.get()));
+    gradOutput = modified_grad.get();
+  }
+  if (!grad) {
+    std::unique_ptr<thpp::Tensor> copy(gradOutput->clone());
+    grad.reset(new THVariable(tensor_type, std::move(copy), 0, 1));
+  } else {
+    grad->data->cadd(*grad->data, *gradOutput);
+  }
+}
+
+auto THVariable::backward(const tensor_list& gradOutputs, bool retain_variables) -> tensor_list {
+  if (creator || **version_counter != 0) {
+    throw std::runtime_error("leaf variable was used in an inplace operation");
+  }
+  if (gradOutputs.size() != 1) {
+    throw std::runtime_error("incorrect number of gradOutputs");
+  }
+  backward(*gradOutputs[0]);
+  return tensor_list();
+}
+
+auto THVariable::pythonObject() -> PyObject* {
+  throw std::runtime_error("unsupported operation pythonObject() on Variable");
+}
+
+auto THVariable::previousFunctions() -> function_list {
+  return function_list();
+}
+
+auto THVariable::numInputs() const -> int {
+  return 0;
+}
+
+auto THVariable::numOutputs() const -> int {
+  return 0;
+}
+
+auto THVariable::requiresGrad() const -> bool {
+  return requires_grad;
+}
+
+auto THVariable::isStochastic() const -> bool {
+  return false;
 }

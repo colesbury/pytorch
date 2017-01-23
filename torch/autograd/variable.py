@@ -195,6 +195,14 @@ class Variable(_C._VariableBase):
         self._backward_hooks[id(handle)] = hook
         return handle
 
+    def _call_backward_hooks(self, grad_output):
+        if self._backward_hooks:
+            for hook in self._backward_hooks.values():
+                result = hook(grad_output)
+                if result is not None:
+                    grad_output = result
+        return grad_output
+
     def _do_backward(self, grad_output, retain_variables):
         assert len(grad_output) == 1
         assert self._version == 0 and self.creator is None, \

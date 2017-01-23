@@ -1,6 +1,7 @@
 #ifndef THP_VARIABLE_H
 #define THP_VARIABLE_H
 
+#include "torch/csrc/autograd/function.h"
 #include <THPP/THPP.h>
 #include <THPP/Tensor.hpp>
 #include <memory>
@@ -51,13 +52,7 @@ struct THPVariableVersion {
   bool saved_ref;
 };
 
-namespace torch { namespace autograd {
-
-struct Function;
-
-}}
-
-struct THVariable {
+struct THVariable : public torch::autograd::Function {
   thpp::TensorType tensor_type;
   std::unique_ptr<thpp::Tensor> data;
   std::shared_ptr<torch::autograd::Function> creator;
@@ -73,6 +68,16 @@ struct THVariable {
 
   bool is_cuda();
   bool is_sparse();
+
+  void backward(const thpp::Tensor& gradOutput);
+  virtual tensor_list backward(const tensor_list& gradOutputs, bool retain_variables) override;
+  virtual PyObject* pythonObject() override;
+
+  virtual function_list previousFunctions() override;
+  virtual int numInputs() const override;
+  virtual int numOutputs() const override;
+  virtual bool requiresGrad() const override;
+  virtual bool isStochastic() const override;
 };
 
 struct THPVariable {

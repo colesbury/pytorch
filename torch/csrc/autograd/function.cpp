@@ -17,7 +17,6 @@ using namespace torch::autograd;
 
 // Throwing this exception means that the python error flags have been already
 // set and control should be immediately returned to the interpreter.
-class python_error : public std::exception {};
 
 #define THPFunction_assert(condition, ...)                                     \
   if (!(condition)) { THPUtils_setError(__VA_ARGS__); throw python_error(); }
@@ -960,32 +959,47 @@ PyFunctionWrapper::PyFunctionWrapper(PyObject* obj) : pyobj(obj)
 
 PyFunctionWrapper::~PyFunctionWrapper() {}
 
-auto PyFunctionWrapper::backward(const variable_list& gradOutputs, bool retain_variables) -> variable_list {
-  // FIXME acquire GIL
-  THPObjectPtr args = PyTuple_New(2);
-  if (!args) throw python_error();
+static THPObjectPtr _do_backward_name;
 
+auto PyFunctionWrapper::backward(const tensor_list& gradOutputs, bool retain_variables) -> tensor_list {
+  // FIXME acquire GIL
   THPObjectPtr pyGradOutputs = PyTuple_New(gradOutputs.size());
   if (!pyGradOutputs) throw python_error();
 
   for (size_t i = 0; i != gradOutputs.size(); ++i) {
-    PyObject* obj = THVariable_get_data(*gradOutputs[i]);
-    if (!obj) throw python_error();
+    PyObject* obj;
+    if (gradOutputs[i]) {
+      obj = createPyObject(*gradOutputs[i]);
+      if (!obj) throw python_error();
+    } else {
+      obj = Py_None;
+      Py_INCREF(obj);
+    }
     PyTuple_SET_ITEM(pyGradOutputs.get(), i, obj);
   }
 
-  PyTuple_SET_ITEM(args.get(), 0, pyGradOutputs.release());
-  PyTuple_SET_ITEM(args.get(), 1, PyBool_FromLong(retain_variables));
+  if (!_do_backward_name) {
+    _do_backward_name = PyUnicode_InternFromString("_do_backward");
+  }
 
-  PyObject* r = THPFunction_do_backward((THPFunction*)pyobj.get(), args.get());
+  THPObjectPtr r = PyObject_CallMethodObjArgs(
+      pyobj.get(),
+      _do_backward_name.get(),
+      pyGradOutputs.get(),
+      retain_variables ? Py_True : Py_False,
+      NULL);
   if (!r) throw python_error();
 
-  auto num_outputs = PyTuple_GET_SIZE(r);
-  variable_list results(num_outputs);
+  auto num_outputs = PyTuple_GET_SIZE(r.get());
+  tensor_list results(num_outputs);
   for (int i = 0; i != num_outputs; ++i) {
-    PyObject* obj = PyTuple_GET_ITEM(r, i);
-    if (!THPVariable_Check(obj)) throw std::runtime_error("expected Variable");
-    results[i] = *((THPVariable*)obj)->cdata;
+    PyObject* obj = PyTuple_GET_ITEM(r.get(), i);
+    if (obj != Py_None) {
+      if (!THPModule_isTensor(obj)) {
+        throw std::runtime_error(std::string("expected Tensor (got '") + Py_TYPE(obj)->tp_name + "')'");
+      }
+      results[i] = createTensor(obj);
+    }
   }
   // FIXME release GIL
   return results;
@@ -995,6 +1009,46 @@ auto PyFunctionWrapper::pythonObject() -> PyObject* {
   PyObject* obj = pyobj.get();
   Py_INCREF(obj);
   return obj;
+}
+
+auto PyFunctionWrapper::previousFunctions() -> function_list {
+  // FIXME acquire GIL!?
+  auto f = (THPFunction*) pyobj.get();
+  function_list previous_functions(f->num_inputs);
+  for (int i = 0; i < f->num_inputs; i++) {
+    PyObject* prev = f->previous_functions[i].get();
+    int output_nr = f->previous_functions[i].output_nr;
+    if (THPFunction_Check(prev)) {
+      previous_functions[i] = std::make_pair(THPFunction_asFunction((THPFunction*)prev), output_nr);
+    } else if (THPVariable_Check(prev)) {
+      previous_functions[i] = std::make_pair(*((THPVariable*)prev)->cdata, output_nr);
+    } else {
+      std::string error = "can't handle: ";
+      error += Py_TYPE(prev)->tp_name;
+      throw std::runtime_error(error);
+    }
+  }
+  return previous_functions;
+}
+
+auto PyFunctionWrapper::numInputs() const -> int {
+  auto f = (THPFunction*) pyobj.get();
+  return f->num_inputs;
+}
+
+auto PyFunctionWrapper::numOutputs() const -> int {
+  auto f = (THPFunction*) pyobj.get();
+  return f->num_outputs;
+}
+
+auto PyFunctionWrapper::requiresGrad() const -> bool {
+  auto f = (THPFunction*) pyobj.get();
+  return f->requires_grad;
+}
+
+auto PyFunctionWrapper::isStochastic() const -> bool {
+  auto f = const_cast<PyObject*>(pyobj.get());
+  return PyObject_IsInstance(f, THPStochasticFunctionClass);
 }
 
 

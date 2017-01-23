@@ -158,6 +158,7 @@ public:
 
   ~THPPointer() { free(); };
   T * get() { return ptr; }
+  const T * get() const { return ptr; }
   T * release() { T *tmp = ptr; ptr = NULL; return tmp; }
   operator T*() { return ptr; }
   THPPointer& operator =(T *new_ptr) { free(); ptr = new_ptr; return *this; }

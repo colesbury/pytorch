@@ -18,4 +18,3 @@ class StochasticFunction(Function):
 
     def _reinforce(self, reward):
         self.reward = reward
-
