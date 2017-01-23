@@ -82,6 +82,11 @@ void Engine_backward(const variable_list& variables,
 
   auto dependencies = THPEngine_compute_dependencies(creators, ready);
 
+  if (!did_leaf_backward && ready.size() == 0) {
+    throw std::runtime_error(
+        "there are no graph nodes that require computing gradients");
+  }
+
   std::unordered_map<Function*, GradBuffer> not_ready;
   while (ready.size() > 0) {
     auto ready_pair = std::move(ready.back()); ready.pop_back();
@@ -188,7 +193,7 @@ PyObject *THPEngine_run_backward(THPEngine *self, PyObject *args, PyObject *kwar
     PyObject *variable = PyTuple_GET_ITEM(variables, i);
     THPUtils_assert(THPVariable_Check(variable), "element %d of variables "
         "tuple is not a Variable", i);
-    vars[i] = *((THPVariable*)variable)->cdata;
+    vars[i] = ((THPVariable*)variable)->cdata;
 
     PyObject *grad = PyTuple_GET_ITEM(grad_variables, i);
     if (THPModule_isTensor(grad)) {

@@ -200,6 +200,7 @@ main_sources = [
     "torch/csrc/autograd/init.cpp",
     "torch/csrc/autograd/variable.cpp",
     "torch/csrc/autograd/function.cpp",
+    "torch/csrc/autograd/native_function.cpp",
     "torch/csrc/autograd/engine.cpp",
     "torch/csrc/autograd/grad_buffer.cpp",
 ]

@@ -15,7 +15,7 @@ namespace torch {
 thpp::TensorType getTensorType(const std::string& name, bool is_cuda, bool is_sparse);
 void registerType(thpp::TensorType type, PyTypeObject *pytype);
 thpp::TensorType getTensorType(PyTypeObject *type);
-PyTypeObject* getPyTypeObject(thpp::TensorType type);
+PyTypeObject* getPyTypeObject(const thpp::Tensor& tensor);
 std::unique_ptr<thpp::Tensor> createTensor(PyObject *data);
 PyObject* createPyObject(const thpp::Tensor& tensor);
 

@@ -99,7 +99,7 @@ struct THPFunction {
     PyObject *non_differentiable;
     PyObject *dirty_tensors;
 
-    std::weak_ptr<torch::autograd::PyFunctionWrapper>* wrapper;  // WEAK
+    std::weak_ptr<torch::autograd::PyFunctionWrapper> wrapper;
 
     THPFunctionPtr *previous_functions;
     std::vector<output_info_type> *output_info;

@@ -53,7 +53,6 @@ struct THPVariableVersion {
 };
 
 struct THVariable : public torch::autograd::Function {
-  thpp::TensorType tensor_type;
   std::unique_ptr<thpp::Tensor> data;
   std::shared_ptr<torch::autograd::Function> creator;
   std::shared_ptr<THVariable> grad;
@@ -64,10 +63,12 @@ struct THVariable : public torch::autograd::Function {
   PyObject *backward_hooks;
   PyObject *pyobj;  // weak reference
 
-  THVariable(thpp::TensorType tensor_type, std::unique_ptr<thpp::Tensor> data, char requires_grad, char is_volatile);
+  THVariable(std::unique_ptr<thpp::Tensor> data, char requires_grad, char is_volatile);
 
   bool is_cuda();
   bool is_sparse();
+
+  thpp::TensorType tensor_type();
 
   void backward(const thpp::Tensor& gradOutput);
   virtual tensor_list backward(const tensor_list& gradOutputs, bool retain_variables) override;
@@ -82,7 +83,7 @@ struct THVariable : public torch::autograd::Function {
 
 struct THPVariable {
     PyObject_HEAD
-    std::shared_ptr<THVariable> *cdata;
+    std::shared_ptr<THVariable> cdata;
     PyObject *data;
 };
 

@@ -58,8 +58,13 @@ TensorType getTensorType(PyTypeObject *type)
   return pytype_to_tensortype.at(type);
 }
 
-PyTypeObject* getPyTypeObject(TensorType type)
+PyTypeObject* getPyTypeObject(const thpp::Tensor& tensor)
 {
+  TensorType type;
+  type.data_type = tensor.type();
+  type.is_cuda = tensor.isCuda();
+  type.is_sparse = false;
+
   return tensortype_to_pytype.at(type);
 }
 
@@ -113,12 +118,7 @@ std::unique_ptr<Tensor> createTensor(PyObject *data)
 
 PyObject* createPyObject(const thpp::Tensor& tensor)
 {
-  TensorType tensor_type;
-  tensor_type.data_type = tensor.type();
-  tensor_type.is_cuda = tensor.isCuda();
-  tensor_type.is_sparse = false;
-
-  auto type = getPyTypeObject(tensor_type);
+  auto type = getPyTypeObject(tensor);
   PyObject *obj = type->tp_alloc(type, 0);
   if (obj) {
     ((THPVoidTensor*)obj)->cdata = (THVoidTensor *)const_cast<thpp::Tensor&>(tensor).retain().cdata();

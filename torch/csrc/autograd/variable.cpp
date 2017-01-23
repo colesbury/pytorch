@@ -12,12 +12,16 @@ using namespace thpp;
 
 PyObject *THPVariableClass = NULL;
 
-THVariable::THVariable(thpp::TensorType tensor_type, std::unique_ptr<thpp::Tensor> data, char requires_grad, char is_volatile)
-    : tensor_type(tensor_type), data(std::move(data)),
-      creator(nullptr), grad(nullptr),
-      version_counter(new THPVariableVersion()), output_nr(0),
-      is_volatile(is_volatile), requires_grad(requires_grad),
-      backward_hooks(nullptr), pyobj(nullptr)
+THVariable::THVariable(std::unique_ptr<thpp::Tensor> data, char requires_grad, char is_volatile)
+    : data(std::move(data))
+    , creator(nullptr)
+    , grad(nullptr)
+    , version_counter(new THPVariableVersion())
+    , output_nr(0)
+    , is_volatile(is_volatile)
+    , requires_grad(requires_grad)
+    , backward_hooks(nullptr)
+    , pyobj(nullptr)
 {
 }
 
@@ -26,16 +30,31 @@ bool THVariable::is_cuda()
   return data->isCuda();
 }
 
+TensorType THVariable::tensor_type()
+{
+  TensorType type;
+  type.data_type = data->type();
+  type.is_cuda = data->isCuda();
+  type.is_sparse = false;
+  return type;
+}
+
+static PyObject* THPVariable_New3(PyTypeObject* type, std::shared_ptr<THVariable>& var)
+{
+  PyObject* obj = type->tp_alloc(type, 0);
+  if (obj) {
+    auto v = (THPVariable*) obj;
+    new (&v->cdata) std::shared_ptr<THVariable>(var);
+  }
+  return obj;
+}
+
 PyObject * THPVariable_Wrap(std::shared_ptr<THVariable>& var)
 {
   if (var->pyobj) {
     Py_INCREF(var->pyobj);
   } else {
-    PyTypeObject *type = (PyTypeObject *)THPVariableClass;
-    var->pyobj = type->tp_alloc(type, 0);
-    if (var->pyobj) {
-      ((THPVariable *)var->pyobj)->cdata = new std::shared_ptr<THVariable>(var);
-    }
+    var->pyobj = THPVariable_New3((PyTypeObject *)THPVariableClass, var);
   }
   return var->pyobj;
 }
@@ -44,17 +63,12 @@ PyObject * THPVariable_New2(PyTypeObject *type, PyObject *data, PyObject *creato
 {
   THPUtils_assert(THPModule_isTensor(data), "data must be a Tensor");
   THPUtils_assert(!creator || THPFunction_Check(creator), "creator must be a Function");
-  PyObject *obj = type->tp_alloc(type, 0);
+  auto v = std::make_shared<THVariable>(createTensor(data), requires_grad, is_volatile);
+  PyObject* obj = THPVariable_New3(type, v);
   if (obj) {
-    auto var = (THPVariable*) obj;
-    auto tensor_type = getTensorType(Py_TYPE(data));
-    auto ptr = std::make_shared<THVariable>(tensor_type, createTensor(data), requires_grad, is_volatile);
-    if (creator) {
-      ptr->creator = THPFunction_asFunction((THPFunction*)creator);
-    }
-    ptr->pyobj = obj;
-    var->cdata = new std::shared_ptr<THVariable>(ptr);
-    var->data = data;
+    v->pyobj = obj;
+    v->creator = THPFunction_asFunction((THPFunction*)creator);
+    ((THPVariable*)obj)->data = data;
     Py_INCREF(data);
   }
   return obj;
@@ -79,7 +93,7 @@ PyObject * THPVariable_NewVolatile(PyObject *data)
 static int THPVariable_traverse(THPVariable *self, visitproc visit, void *arg)
 {
   Py_VISIT(self->data);
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   // Py_VISIT(var.creator);
   Py_VISIT(var.backward_hooks);
   return 0;
@@ -88,7 +102,7 @@ static int THPVariable_traverse(THPVariable *self, visitproc visit, void *arg)
 static int THPVariable_clear(THPVariable *self)
 {
   Py_CLEAR(self->data);
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   // Py_CLEAR(var.creator);
   Py_CLEAR(var.backward_hooks);
   return 0;
@@ -96,14 +110,14 @@ static int THPVariable_clear(THPVariable *self)
 
 static void THPVariable_dealloc(THPVariable* self)
 {
+  using std::shared_ptr;
   PyObject_GC_UnTrack(self);
   Py_XDECREF(self->data);
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   // Py_XDECREF(var.creator);
   Py_XDECREF(var.backward_hooks);
   var.pyobj = nullptr;
-  delete self->cdata;
-  self->cdata = nullptr;
+  self->cdata.~shared_ptr<THVariable>();
   Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
@@ -138,13 +152,13 @@ typedef int (*setter)(PyObject *, PyObject *, void *);
 
 PyObject *THPVariable_get_version(THPVariable *self)
 {
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   return PyInt_FromLong(**var.version_counter);
 }
 
 PyObject *THPVariable_get_creator(THPVariable *self)
 {
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   if (!var.creator) {
     Py_RETURN_NONE;
   }
@@ -154,8 +168,8 @@ PyObject *THPVariable_get_creator(THPVariable *self)
 PyObject * THPVariable_get_data(THPVariable *self)
 {
   if (!self->data) {
-    auto& var = **self->cdata;
-    PyTypeObject* type = getPyTypeObject(var.tensor_type);
+    auto& var = *self->cdata;
+    PyTypeObject* type = getPyTypeObject(*var.data);
     self->data = type->tp_alloc(type, 0);
     if (self->data) {
       ((THPVoidTensor*)self->data)->cdata = (THVoidTensor *)var.data->retain().cdata();
@@ -172,16 +186,15 @@ int THPVariable_set_data(THPVariable *self, PyObject *data)
   Py_INCREF(data);
   Py_XDECREF(self->data);
   self->data = data;
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   auto tensor = createTensor(data);
   var.data.swap(tensor);
-  var.tensor_type = getTensorType(Py_TYPE(data));
   return 0;
 }
 
 PyObject *THPVariable_get_raw_grad(THPVariable *self)
 {
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   if (!var.grad) {
     Py_RETURN_NONE;
   }
@@ -190,59 +203,59 @@ PyObject *THPVariable_get_raw_grad(THPVariable *self)
 
 int THPVariable_set_raw_grad(THPVariable *self, PyObject *data)
 {
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   if (data == Py_None) {
     var.grad.reset();
     return 0;
   }
   THPUtils_assertRet(-1, THPVariable_Check(data),
       "expected Variable or None (got %s)", THPUtils_typename(data));
-  var.grad = *((THPVariable*)data)->cdata;
+  var.grad = ((THPVariable*)data)->cdata;
   return 0;
 }
 
 PyObject *THPVariable_get_grad(THPVariable *self)
 {
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   if (!var.grad) {
     THCPAutoGPU __guard(var.data->getDevice());
     auto grad = var.data->newTensor();
     grad->resizeAs(*var.data).zero();
-    var.grad = std::make_shared<THVariable>(var.tensor_type, std::move(grad), 0, 1);
+    var.grad = std::make_shared<THVariable>(std::move(grad), 0, 1);
   }
   return THPVariable_Wrap(var.grad);
 }
 
 PyObject *THPVariable_get_volatile(THPVariable *self)
 {
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   return PyBool_FromLong(var.is_volatile);
 }
 
 int THPVariable_set_volatile(THPVariable *self, PyObject *obj)
 {
   THPUtils_assertRet(-1, PyBool_Check(obj), "volatile must be a bool");
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   var.is_volatile = (obj == Py_True);
   return 0;
 }
 
 PyObject *THPVariable_get_output_nr(THPVariable *self)
 {
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   return PyInt_FromLong(var.output_nr);
 }
 
 PyObject *THPVariable_get_requires_grad(THPVariable *self)
 {
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   return PyBool_FromLong(var.requires_grad);
 }
 
 int THPVariable_set_requires_grad(THPVariable *self, PyObject *obj)
 {
   THPUtils_assertRet(-1, PyBool_Check(obj), "requires_grad must be a bool");
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   if (var.creator) {
     const char *hint = "";
     if (obj == Py_False) {
@@ -259,7 +272,7 @@ int THPVariable_set_requires_grad(THPVariable *self, PyObject *obj)
 
 PyObject *THPVariable_get_backwards_hooks(THPVariable *self)
 {
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   if (var.backward_hooks) {
     Py_INCREF(var.backward_hooks);
     return var.backward_hooks;
@@ -269,7 +282,7 @@ PyObject *THPVariable_get_backwards_hooks(THPVariable *self)
 
 int THPVariable_set_backwards_hooks(THPVariable *self, PyObject *obj)
 {
-  auto& var = **self->cdata;
+  auto& var = *self->cdata;
   Py_INCREF(obj);
   Py_XDECREF(var.backward_hooks);
   var.backward_hooks = obj;
@@ -362,7 +375,7 @@ auto THVariable::backward(const Tensor& _gradOutput) -> void {
   }
   if (!grad) {
     std::unique_ptr<thpp::Tensor> copy(gradOutput->clone());
-    grad.reset(new THVariable(tensor_type, std::move(copy), 0, 1));
+    grad.reset(new THVariable(std::move(copy), 0, 1));
   } else {
     grad->data->cadd(*grad->data, *gradOutput);
   }

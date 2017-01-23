@@ -83,9 +83,10 @@ static int THPFunction_clear(THPFunction *self)
 
 static void THPFunction_dealloc(THPFunction* self)
 {
+  using std::weak_ptr;
   PyObject_GC_UnTrack(self);
   THPFunction_clear(self);
-  delete self->wrapper;
+  self->wrapper.~weak_ptr<torch::autograd::PyFunctionWrapper>();
   Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
@@ -97,6 +98,7 @@ PyObject *THPFunction_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
   // Python zero-initializes the object memory, so there's no need to initialize
   // most fields
   self->num_outputs = -1;
+  new (&self->wrapper) std::weak_ptr<torch::autograd::PyFunctionWrapper>();
   return (PyObject*)self;
 }
 
@@ -129,7 +131,7 @@ static void _mark_dirty(THPFunction *self, t2var_type &t2var,
       THPFunction_assert(false, "mark_dirty only accepts input tensors, but "
           "argument %d isn't one", i);
     }
-    auto &v_counter = *(*variable->cdata)->version_counter;
+    auto &v_counter = *variable->cdata->version_counter;
     THPFunction_assert(v_counter.var_refcnt() == 1, "in-place operations can be "
         "only used on variables that don't share storage with any other "
         "variables, but detected that there are %d objects sharing it",
@@ -159,7 +161,7 @@ static void _wrap_outputs(THPFunction *self, t2var_type &t2var,
     } else {
       // If one of the outputs was also an input tensor it's a bit more complicated.
       THPVariable *input_var = it->second;
-      auto& input_var_ = **input_var->cdata;
+      auto& input_var_ = *input_var->cdata;
       if (input_var_.creator) {
         // If it's not a leaf we want to move it in the graph so backprop
         // will be computed correctly:
@@ -180,7 +182,7 @@ static void _wrap_outputs(THPFunction *self, t2var_type &t2var,
           Py_INCREF(input_var);
           output_var = input_var;
           Py_INCREF(self);
-          auto& output_var_ = **output_var->cdata;
+          auto& output_var_ = *output_var->cdata;
           output_var_.creator = THPFunction_asFunction(self);
           if (!output_var_.requires_grad && self->requires_grad) {
             // Now, there's another subtlety. We move the input in the graph
@@ -210,25 +212,25 @@ static void _wrap_outputs(THPFunction *self, t2var_type &t2var,
           output_var = (THPVariable*)THPVariable_New(output, (PyObject*)self,
                   self->requires_grad);
           if (!output_var) throw python_error();
-          (*output_var->cdata)->version_counter->join_with(*(*input_var->cdata)->version_counter);
+          output_var->cdata->version_counter->join_with(*input_var->cdata->version_counter);
         }
       }
     }
     if (!output_var) throw python_error();
 
-    THVoidTensor *output_tensor = (THVoidTensor*)(*output_var->cdata)->data->cdata();
+    THVoidTensor *output_tensor = (THVoidTensor*)output_var->cdata->data->cdata();
     long ndim = output_tensor->nDimension;
     int device_id = -1;
-    if ((*output_var->cdata)->is_cuda()) {
+    if (output_var->cdata->is_cuda()) {
       device_id = output_tensor->storage->device;
     }
     output_info[i] = std::make_tuple(
-      (PyObject *)getPyTypeObject((*output_var->cdata)->tensor_type),
+      (PyObject *)getPyTypeObject(*output_var->cdata->data),
       device_id,
       std::vector<long>(output_tensor->size, output_tensor->size + ndim)
     );
     t2var[output] = output_var;
-    (*output_var->cdata)->output_nr = i;
+    output_var->cdata->output_nr = i;
     PyTuple_SET_ITEM(outputs, i, (PyObject*)output_var);
   }
 }
@@ -265,8 +267,8 @@ static void _save_variables(THPFunction*self, t2var_type &t2var)
     Py_INCREF(tensor);
     self->saved_variables->emplace_back(
       tensor,
-      **(*variable->cdata)->version_counter,
-      std::unique_ptr<THPVariableVersion>((*variable->cdata)->version_counter->new_saved_ref())
+      **variable->cdata->version_counter,
+      std::unique_ptr<THPVariableVersion>(variable->cdata->version_counter->new_saved_ref())
     );
   }
   // Free .to_save
@@ -308,7 +310,7 @@ static void _join_version_counters(THPFunction *self, t2var_type &t2var)
           "and output tensors, but argument %d doesn't satify this "
           "condition", i);
     }
-    (*v2->cdata)->version_counter->join_with(*(*v1->cdata)->version_counter);
+    v2->cdata->version_counter->join_with(*v1->cdata->version_counter);
   }
   // Free .shared_pairs
   Py_DECREF(self->shared_pairs);
@@ -328,10 +330,8 @@ static void _mark_non_differentiable(THPFunction *self, t2var_type &t2var)
     THPVariable *var;
     try {
       var = t2var.at(t);
-      auto w = self->wrapper;
-      THPFunction_assert(w, "w is null");
-      auto tmp = w->lock();
-      THPFunction_assert((*var->cdata)->creator.get() == tmp.get(),
+      auto tmp = self->wrapper.lock();
+      THPFunction_assert(var->cdata->creator.get() == tmp.get(),
           "mark_non_differentiable only accepts output tensors, but "
           "argument %d isn't an output", i);
     } catch (std::out_of_range &e) {
@@ -340,7 +340,7 @@ static void _mark_non_differentiable(THPFunction *self, t2var_type &t2var)
       THPFunction_assert(false, "mark_non_differentiable only accepts function "
           "outputs");
     }
-    (*var->cdata)->requires_grad = 0;
+    var->cdata->requires_grad = 0;
   }
   Py_DECREF(self->non_differentiable);
   self->non_differentiable = NULL;
@@ -378,10 +378,10 @@ PyObject *THPFunction_do_forward(THPFunction *self, PyObject *inputs)
       PyTuple_SET_ITEM(unpacked_inputs.get(), i, THPVariable_get_data(variable));
 
       // We can't move this to C, because it's going to be accessed from user code.
-      PyTuple_SET_ITEM(self->needs_input_grad, i, PyBool_FromLong((*variable->cdata)->requires_grad));
+      PyTuple_SET_ITEM(self->needs_input_grad, i, PyBool_FromLong(variable->cdata->requires_grad));
 
-      is_volatile = is_volatile || (*variable->cdata)->is_volatile;
-      self->requires_grad = self->requires_grad || (*variable->cdata)->requires_grad;
+      is_volatile = is_volatile || variable->cdata->is_volatile;
+      self->requires_grad = self->requires_grad || variable->cdata->requires_grad;
     }
 
 
@@ -405,7 +405,7 @@ PyObject *THPFunction_do_forward(THPFunction *self, PyObject *inputs)
         PyObject *output = PyTuple_GET_ITEM(raw_output.get(), i);
         THPVariable *output_var = (THPVariable*)THPVariable_NewVolatile(output);
         if (!output_var) return NULL;
-        (*output_var->cdata)->output_nr = i;
+        output_var->cdata->output_nr = i;
         PyTuple_SET_ITEM(outputs.get(), i, (PyObject*)output_var);
       }
     } else {
@@ -423,7 +423,7 @@ PyObject *THPFunction_do_forward(THPFunction *self, PyObject *inputs)
 
         // Save previous function in a helper class (that has a smart pointer to
         // the object and remembers which output did we use).
-        auto& input_var_ = **input_var->cdata;
+        auto& input_var_ = *input_var->cdata;
         PyObject *prev_fn;
         if (input_var_.creator) {
           prev_fn = input_var_.creator->pythonObject();
@@ -431,7 +431,7 @@ PyObject *THPFunction_do_forward(THPFunction *self, PyObject *inputs)
           prev_fn = (PyObject*)input_var;
           Py_INCREF(prev_fn);
         }
-        self->previous_functions[i] = THPFunctionPtr(prev_fn, (*input_var->cdata)->output_nr);
+        self->previous_functions[i] = THPFunctionPtr(prev_fn, input_var->cdata->output_nr);
       }
 
       std::unordered_set<PyObject *> dirty_inputs;
@@ -503,7 +503,7 @@ static void _ensure_correct_hook_result_single(PyObject *original,
   THPVariable *returned_var = (THPVariable*)returned;
   // Check that the type matches
   if(Py_TYPE(original) != Py_TYPE(returned) ||
-      (*original_var->cdata)->tensor_type != (*returned_var->cdata)->tensor_type) {
+      original_var->cdata->tensor_type() != returned_var->cdata->tensor_type()) {
     char *hook_name = _try_get_name(hook, tmp);
     THPUtils_setError("backward hook %s%s%shas changed the type of "
         "grad_input (was %s, but got %s)",
@@ -804,8 +804,8 @@ PyObject* THPFunction__register_hook_dict(THPFunction *self, PyObject *_var)
 
   if (!self->output_backward_hooks)
     self->output_backward_hooks = new THPObjectPtr[self->num_inputs];
-  Py_INCREF((*var->cdata)->backward_hooks);
-  self->output_backward_hooks[(*var->cdata)->output_nr] = (*var->cdata)->backward_hooks;
+  Py_INCREF(var->cdata->backward_hooks);
+  self->output_backward_hooks[var->cdata->output_nr] = var->cdata->backward_hooks;
 
   Py_RETURN_NONE;
 }
@@ -939,13 +939,13 @@ bool THPFunction_initModule(PyObject *module)
 
 std::shared_ptr<PyFunctionWrapper> THPFunction_asFunction(THPFunction* self)
 {
-  std::shared_ptr<PyFunctionWrapper> f;
-  if (self->wrapper) {
-    f = self->wrapper->lock();
+  if (!self) {
+    return std::shared_ptr<PyFunctionWrapper>();
   }
+  auto f = self->wrapper.lock();
   if (!f) {
     f = std::make_shared<PyFunctionWrapper>((PyObject*)self);
-    self->wrapper = new std::weak_ptr<PyFunctionWrapper>(f);
+    self->wrapper = std::weak_ptr<PyFunctionWrapper>(f);
   }
   return f;
 }
@@ -1021,7 +1021,7 @@ auto PyFunctionWrapper::previousFunctions() -> function_list {
     if (THPFunction_Check(prev)) {
       previous_functions[i] = std::make_pair(THPFunction_asFunction((THPFunction*)prev), output_nr);
     } else if (THPVariable_Check(prev)) {
-      previous_functions[i] = std::make_pair(*((THPVariable*)prev)->cdata, output_nr);
+      previous_functions[i] = std::make_pair(((THPVariable*)prev)->cdata, output_nr);
     } else {
       std::string error = "can't handle: ";
       error += Py_TYPE(prev)->tp_name;
