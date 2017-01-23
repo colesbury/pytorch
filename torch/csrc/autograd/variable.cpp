@@ -54,6 +54,8 @@ PyObject * THPVariable_New2(PyTypeObject *type, PyObject *data, PyObject *creato
     }
     ptr->pyobj = obj;
     var->cdata = new std::shared_ptr<THVariable>(ptr);
+    var->data = data;
+    Py_INCREF(data);
   }
   return obj;
 }
@@ -76,6 +78,7 @@ PyObject * THPVariable_NewVolatile(PyObject *data)
 
 static int THPVariable_traverse(THPVariable *self, visitproc visit, void *arg)
 {
+  Py_VISIT(self->data);
   auto& var = **self->cdata;
   // Py_VISIT(var.creator);
   Py_VISIT(var.backward_hooks);
@@ -84,6 +87,7 @@ static int THPVariable_traverse(THPVariable *self, visitproc visit, void *arg)
 
 static int THPVariable_clear(THPVariable *self)
 {
+  Py_CLEAR(self->data);
   auto& var = **self->cdata;
   // Py_CLEAR(var.creator);
   Py_CLEAR(var.backward_hooks);
@@ -93,6 +97,7 @@ static int THPVariable_clear(THPVariable *self)
 static void THPVariable_dealloc(THPVariable* self)
 {
   PyObject_GC_UnTrack(self);
+  Py_XDECREF(self->data);
   auto& var = **self->cdata;
   // Py_XDECREF(var.creator);
   Py_XDECREF(var.backward_hooks);
@@ -146,26 +151,27 @@ PyObject *THPVariable_get_creator(THPVariable *self)
   return var.creator->pythonObject();
 }
 
-PyObject* THVariable_get_data(const THVariable& var)
-{
-  auto& data = *var.data;
-  PyTypeObject* type = getPyTypeObject(var.tensor_type);
-  PyObject *obj = type->tp_alloc(type, 0);
-  if (obj) {
-    ((THPVoidTensor*)obj)->cdata = (THVoidTensor *)data.retain().cdata();
-  }
-  return obj;
-}
-
 PyObject * THPVariable_get_data(THPVariable *self)
 {
-  return THVariable_get_data(**self->cdata);
+  if (!self->data) {
+    auto& var = **self->cdata;
+    PyTypeObject* type = getPyTypeObject(var.tensor_type);
+    self->data = type->tp_alloc(type, 0);
+    if (self->data) {
+      ((THPVoidTensor*)self->data)->cdata = (THVoidTensor *)var.data->retain().cdata();
+    }
+  }
+  Py_INCREF(self->data);
+  return self->data;
 }
 
 int THPVariable_set_data(THPVariable *self, PyObject *data)
 {
   THPUtils_assertRet(-1, THPModule_isTensor(data), "Variable data has to "
       "be a tensor, but got %s", THPUtils_typename(data));
+  Py_INCREF(data);
+  Py_XDECREF(self->data);
+  self->data = data;
   auto& var = **self->cdata;
   auto tensor = createTensor(data);
   var.data.swap(tensor);

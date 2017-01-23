@@ -2,7 +2,6 @@ import torch
 import torch._C as _C
 import torch.utils.hooks as hooks
 from collections import OrderedDict
-from itertools import chain
 
 
 class Function(_C._FunctionBase):
