@@ -397,6 +397,9 @@ auto THVariable::pythonObject() -> PyObject* {
 }
 
 auto THVariable::previousFunctions() -> function_list {
+  if (creator) {
+    return function_list({ std::make_pair<>(creator, output_nr) });
+  }
   return function_list();
 }
 
