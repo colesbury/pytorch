@@ -351,6 +351,11 @@ auto THTensor<real>::cadd(const Tensor& src1, scalar_type value, const Tensor& s
 }
 
 template<>
+auto THTensor<real>::cadd(const Tensor& src1, const Tensor& src2) -> THTensor& {
+  return cadd(src1, static_cast<scalar_type>(1), src2);
+}
+
+template<>
 auto THTensor<real>::csub(const Tensor& src1, scalar_type value, const Tensor& src2) -> THTensor& {
   THTensor &src1_t = non_const_cast(src1);
   THTensor &src2_t = non_const_cast(src2);

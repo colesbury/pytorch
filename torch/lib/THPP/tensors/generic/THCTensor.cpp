@@ -359,6 +359,11 @@ auto THCTensor<real>::cadd(const Tensor& src1, scalar_type value, const Tensor& 
 }
 
 template<>
+auto THCTensor<real>::cadd(const Tensor& src1, const Tensor& src2) -> THCTensor& {
+  return cadd(src1, static_cast<scalar_type>(1), src2);
+}
+
+template<>
 auto THCTensor<real>::csub(const Tensor& src1, scalar_type value, const Tensor& src2) -> THCTensor& {
   THCTensor &src1_t = non_const_cast(src1);
   THCTensor &src2_t = non_const_cast(src2);

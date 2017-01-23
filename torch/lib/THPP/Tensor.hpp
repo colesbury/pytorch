@@ -62,6 +62,7 @@ struct Tensor {
   virtual Tensor& gather(const Tensor& src, int dimension, const Tensor& index) = 0;
   virtual Tensor& scatter(int dimension, const Tensor& index, const Tensor& src) = 0;
   virtual Tensor& neg(const Tensor& src) = 0;
+  virtual Tensor& cadd(const Tensor& src1, const Tensor& src2) = 0;
   virtual Tensor& cinv(const Tensor& src) = 0;
   virtual Tensor& cmul(const Tensor& src1, const Tensor& src2) = 0;
   virtual Tensor& cpow(const Tensor& src1, const Tensor& src2) = 0;

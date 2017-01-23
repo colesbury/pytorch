@@ -103,6 +103,7 @@ public:
   virtual THCTensor& fmod(const Tensor& src, scalar_type value) override;
   virtual THCTensor& remainder(const Tensor& src, scalar_type value) override;
   virtual THCTensor& clamp(const Tensor& src, scalar_type min_value, scalar_type max_value) override;
+  virtual THCTensor& cadd(const Tensor& src1, const Tensor& src2) override;
   virtual THCTensor& cadd(const Tensor& src1, scalar_type value, const Tensor& src2) override;
   virtual THCTensor& csub(const Tensor& src1, scalar_type value, const Tensor& src2) override;
   virtual THCTensor& cmul(const Tensor& src1, const Tensor& src2) override;
