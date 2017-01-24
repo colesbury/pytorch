@@ -100,6 +100,7 @@ def wrap_function(name, type, arguments):
 def generate_wrappers():
     wrap_nn()
     wrap_cunn()
+    wrap_generic()
 
 def wrap_nn():
     wrapper = '#include <TH/TH.h>\n\n\n'
@@ -128,3 +129,66 @@ def wrap_cunn():
         NullableArguments(),
         AutoGPU(has_self=False),
     ])
+
+GENERIC_FUNCTION_TEMPLATE = Template("""\
+[[
+  name: $name
+  return: void
+  options:
+""")
+
+def wrap_generic_function(name, nn_arguments, cunn_arguments):
+    cname = 'THNN_' + type + name
+    declaration = ''
+    indent = ' ' * 4
+    dict_indent = ' ' * 6
+    prefix = indent + '- '
+    declaration = ''
+    declaration += FUNCTION_TEMPLATE.substitute(name=name)
+    for arg in arguments:
+        if not arg.is_optional:
+            declaration += prefix + TYPE_TRANSFORMS[type].get(arg.type, arg.type) + ' ' + arg.name + '\n'
+        else:
+            t = TYPE_TRANSFORMS[type].get(arg.type, arg.type)
+            declaration += prefix + 'type: ' + t        + '\n' + \
+                      dict_indent + 'name: ' + arg.name + '\n' + \
+                      dict_indent + 'nullable: True' + '\n'
+    declaration += ']]\n\n\n'
+    return declaration
+
+
+def wrap_generic():
+    import itertools
+    from collections import OrderedDict
+    nn_functions = thnn_utils.parse_header(thnn_utils.THNN_H_PATH)
+    cunn_functions = thnn_utils.parse_header(thnn_utils.THCUNN_H_PATH)
+    functions = OrderedDict()
+
+    def genericize_arg(arg):
+        arg.type = (arg.type.replace('THNNState', 'void')
+                            .replace('THCState', 'void')
+                            .replace('THTensor*', 'thpp::Tensor&')
+                            .replace('THCTensor*', 'thpp::Tensor&')
+                            .replace('THCIndexTensor*', 'IndexTensor&')
+                            .replace('THIndexTensor*', 'IndexTensor&')
+                            .replace('THIndex_t', 'long'))
+        return arg
+
+    for fn in nn_functions:
+        assert fn.name not in functions
+        args = [genericize_arg(arg) for arg in fn.arguments]
+        functions[fn.name] = {
+            'name': fn.name,
+            'args': args,
+            'types': ['float', 'double']
+        }
+
+    for fn in cunn_functions:
+        args = [genericize_arg(arg) for arg in fn.arguments]
+        if fn.name in functions:
+            a = [arg.type for arg in args]
+            b = [arg.type for arg in functions[fn.name]['args']]
+            if a != b:
+                print(fn.name)
+                print(a)
+                print(b)
