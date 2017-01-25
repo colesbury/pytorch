@@ -2,7 +2,7 @@ import os
 import sys
 from string import Template, ascii_lowercase
 from ..cwrap import cwrap
-from ..cwrap.plugins import StandaloneExtension, NullableArguments, AutoGPU
+from ..cwrap.plugins import StandaloneExtension, GenericNN, NullableArguments, AutoGPU
 
 BASE_PATH = os.path.realpath(os.path.join(__file__, '..', '..', '..'))
 WRAPPER_PATH = os.path.join(BASE_PATH, 'torch', 'csrc', 'nn')
@@ -137,32 +137,55 @@ GENERIC_FUNCTION_TEMPLATE = Template("""\
   options:
 """)
 
-def wrap_generic_function(name, nn_arguments, cunn_arguments):
-    cname = 'THNN_' + type + name
+
+def wrap_generic_function(name, backends):
     declaration = ''
-    indent = ' ' * 4
-    dict_indent = ' ' * 6
-    prefix = indent + '- '
-    declaration = ''
-    declaration += FUNCTION_TEMPLATE.substitute(name=name)
-    for arg in arguments:
-        if not arg.is_optional:
-            declaration += prefix + TYPE_TRANSFORMS[type].get(arg.type, arg.type) + ' ' + arg.name + '\n'
-        else:
-            t = TYPE_TRANSFORMS[type].get(arg.type, arg.type)
-            declaration += prefix + 'type: ' + t        + '\n' + \
-                      dict_indent + 'name: ' + arg.name + '\n' + \
-                      dict_indent + 'nullable: True' + '\n'
+    declaration += GENERIC_FUNCTION_TEMPLATE.substitute(name=name)
+    for backend in backends:
+        declaration += '    - cname: ' + name + '\n'
+        declaration += '      backend: ' + backend['name'] + '\n'
+        declaration += '      arguments:\n'
+        for arg in backend['arguments']:
+            declaration += '       - arg: ' + arg.type + ' ' + arg.name + '\n'
     declaration += ']]\n\n\n'
     return declaration
 
 
 def wrap_generic():
-    import itertools
     from collections import OrderedDict
-    nn_functions = thnn_utils.parse_header(thnn_utils.THNN_H_PATH)
-    cunn_functions = thnn_utils.parse_header(thnn_utils.THCUNN_H_PATH)
-    functions = OrderedDict()
+    defs = OrderedDict()
+
+    def should_wrap_function(name):
+        return (name.endswith('updateOutput')
+                or name.endswith('updateGradInput')
+                or name.endswith('accGradParameters'))
+
+    def add_functions(name, functions):
+        for fn in functions:
+            if not should_wrap_function(fn.name):
+                continue
+            if fn.name not in defs:
+                defs[fn.name] = []
+            defs[fn.name] += [{
+                'name': name,
+                'arguments': fn.arguments,
+            }]
+
+    add_functions('nn', thnn_utils.parse_header(thnn_utils.THNN_H_PATH))
+    add_functions('cunn', thnn_utils.parse_header(thnn_utils.THCUNN_H_PATH))
+
+    wrapper = ''
+    wrapper += '#include "THNN_generic.h"\n\n'
+    wrapper += 'namespace torch { namespace nn {\n\n'
+    for name, backends in defs.items():
+        wrapper += wrap_generic_function(name, backends)
+    wrapper += '}}\n'
+    with open('torch/csrc/nn/THNN_generic.cwrap', 'w') as f:
+        f.write(wrapper)
+
+    cwrap('torch/csrc/nn/THNN_generic.cwrap', plugins=[
+        GenericNN('torch._thnn._THCUNN'),
+    ], default_plugins=False)
 
     def genericize_arg(arg):
         arg.type = (arg.type.replace('THNNState', 'void')
@@ -173,22 +196,3 @@ def wrap_generic():
                             .replace('THIndexTensor*', 'IndexTensor&')
                             .replace('THIndex_t', 'long'))
         return arg
-
-    for fn in nn_functions:
-        assert fn.name not in functions
-        args = [genericize_arg(arg) for arg in fn.arguments]
-        functions[fn.name] = {
-            'name': fn.name,
-            'args': args,
-            'types': ['float', 'double']
-        }
-
-    for fn in cunn_functions:
-        args = [genericize_arg(arg) for arg in fn.arguments]
-        if fn.name in functions:
-            a = [arg.type for arg in args]
-            b = [arg.type for arg in functions[fn.name]['args']]
-            if a != b:
-                print(fn.name)
-                print(a)
-                print(b)

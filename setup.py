@@ -161,6 +161,7 @@ include_dirs += [
     tmp_install_path + "/include",
     tmp_install_path + "/include/TH",
     tmp_install_path + "/include/THPP",
+    tmp_install_path + "/include/THNN",
 ]
 
 extra_link_args.append('-L' + lib_path)
@@ -203,6 +204,7 @@ main_sources = [
     "torch/csrc/autograd/native_function.cpp",
     "torch/csrc/autograd/engine.cpp",
     "torch/csrc/autograd/grad_buffer.cpp",
+    "torch/csrc/nn/THNN_generic.cpp",
 ]
 
 try:
@@ -221,6 +223,7 @@ if WITH_CUDA:
         if os.path.exists(cuda_lib_path):
             break
     include_dirs.append(cuda_include_path)
+    include_dirs.append(tmp_install_path + "/include/THCUNN")
     extra_link_args.append('-L' + cuda_lib_path)
     extra_link_args.append('-Wl,-rpath,' + cuda_lib_path)
     extra_compile_args += ['-DWITH_CUDA']
