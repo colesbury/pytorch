@@ -51,10 +51,10 @@ class build_deps(Command):
     def run(self):
         from tools.nnwrap import generate_wrappers as generate_nn_wrappers
         build_all_cmd = ['bash', 'torch/lib/build_all.sh']
-        # if WITH_CUDA:
-        #     build_all_cmd += ['--with-cuda']
-        # if subprocess.call(build_all_cmd) != 0:
-        #     sys.exit(1)
+        if WITH_CUDA:
+            build_all_cmd += ['--with-cuda']
+        if subprocess.call(build_all_cmd) != 0:
+            sys.exit(1)
         generate_nn_wrappers()
 
 

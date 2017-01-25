@@ -92,7 +92,7 @@ $type_check
         for arg in option['arguments']:
             if arg['type'] in self.REAL_TENSOR_TYPES:
                 name = arg.get('formal_name', arg['name'])
-                checked_args += ['"' + name + '"', name]
+                checked_args += ['"' + name + '"', '&' + name]
         checked_args += ['NULL']
         tmpl = self.TYPE_CHECK.substitute(args=', '.join(checked_args))
         # print(template)
