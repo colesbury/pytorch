@@ -1,5 +1,4 @@
-#ifndef THP_GRAD_BUFFER_H
-#define THP_GRAD_BUFFER_H
+#pragma once
 
 #include <vector>
 #include <utility>
@@ -22,9 +21,6 @@ struct GradBuffer {
 
 private:
   std::vector<std::pair<std::unique_ptr<thpp::Tensor>, bool>> buffer;
-
 };
 
 }}  // namespace torch::autograd
-
-#endif

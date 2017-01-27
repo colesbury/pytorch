@@ -7,6 +7,7 @@
 
 #include "THP.h"
 #include "DynamicTypes.h"
+#include "torch/csrc/autograd/python_function.h"
 
 #ifdef WITH_CUDA
 #include "cuda/AutoGPU.h"
@@ -1029,11 +1030,6 @@ auto PyFunctionWrapper::previousFunctions() -> function_list {
     }
   }
   return previous_functions;
-}
-
-auto PyFunctionWrapper::numInputs() const -> int {
-  auto f = (THPFunction*) pyobj.get();
-  return f->num_inputs;
 }
 
 auto PyFunctionWrapper::numOutputs() const -> int {

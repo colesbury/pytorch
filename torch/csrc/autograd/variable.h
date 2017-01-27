@@ -52,6 +52,35 @@ struct THPVariableVersion {
   bool saved_ref;
 };
 
+struct SavedVariable {
+  SavedVariable()
+    : data()
+    , expected_version(-1)
+    , version() {}
+
+  SavedVariable(
+      std::unique_ptr<thpp::Tensor> data,
+      int expected_version,
+      std::unique_ptr<THPVariableVersion> version)
+    : data(std::move(data))
+    , expected_version(expected_version)
+    , version(std::move(version)) {}
+
+  std::unique_ptr<thpp::Tensor> data;
+  int expected_version;
+  std::unique_ptr<THPVariableVersion> version;
+
+  std::unique_ptr<thpp::Tensor>& unpack();
+};
+
+using torch::autograd::tensor_list;
+using torch::autograd::function_list;
+
+
+namespace torch { namespace autograd {
+struct NativeFunction;
+}}
+
 struct THVariable : public torch::autograd::Function {
   std::unique_ptr<thpp::Tensor> data;
   std::shared_ptr<torch::autograd::Function> creator;
@@ -63,7 +92,13 @@ struct THVariable : public torch::autograd::Function {
   PyObject *backward_hooks;
   PyObject *pyobj;  // weak reference
 
-  THVariable(std::unique_ptr<thpp::Tensor> data, char requires_grad, char is_volatile);
+  THVariable(
+      std::unique_ptr<thpp::Tensor> data,
+      std::shared_ptr<torch::autograd::NativeFunction> creator);
+  THVariable(
+      std::unique_ptr<thpp::Tensor> data,
+      char requires_grad,
+      char is_volatile);
 
   bool is_cuda();
   bool is_sparse();
@@ -75,10 +110,11 @@ struct THVariable : public torch::autograd::Function {
   virtual PyObject* pythonObject() override;
 
   virtual function_list previousFunctions() override;
-  virtual int numInputs() const override;
   virtual int numOutputs() const override;
   virtual bool requiresGrad() const override;
   virtual bool isStochastic() const override;
+
+  SavedVariable save() const;
 };
 
 struct THPVariable {
@@ -91,7 +127,7 @@ bool THPVariable_initModule(PyObject *module);
 extern PyObject *THPVariableClass;
 PyObject * THPVariable_NewVolatile(PyObject *data);
 PyObject * THPVariable_New(PyObject *data, PyObject *creator, char requires_grad, char is_volatile=0);
-
+PyObject * THPVariable_Wrap(std::shared_ptr<THVariable>& var);
 PyObject * THPVariable_get_data(THPVariable *self);
 
 inline bool THPVariable_Check(PyObject *obj)

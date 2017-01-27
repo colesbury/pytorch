@@ -2,7 +2,6 @@
 #define THP_ENGINE_H
 
 struct Engine {
-
 };
 
 struct THPEngine {

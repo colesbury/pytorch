@@ -5,8 +5,6 @@
 #include <stdexcept>
 #include <string>
 
-#include "THP.h"
-
 #define HANDLE_TH_ERRORS                                                       \
   try {
 

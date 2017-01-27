@@ -5,6 +5,7 @@ PyObject * THPAutograd_initExtension(PyObject *_unused);
 
 #include "variable.h"
 #include "function.h"
+#include "python_function.h"
 #include "engine.h"
 #include "native_function.h"
 

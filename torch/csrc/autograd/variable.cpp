@@ -4,6 +4,7 @@
 #include "THP.h"
 #include "torch/csrc/DynamicTypes.h"
 #include "torch/csrc/cuda/AutoGPU.h"
+#include "torch/csrc/autograd/native_function.h"
 
 
 using namespace torch;
@@ -12,7 +13,10 @@ using namespace thpp;
 
 PyObject *THPVariableClass = NULL;
 
-THVariable::THVariable(std::unique_ptr<thpp::Tensor> data, char requires_grad, char is_volatile)
+THVariable::THVariable(
+  std::unique_ptr<thpp::Tensor> data,
+  char requires_grad,
+  char is_volatile)
     : data(std::move(data))
     , creator(nullptr)
     , grad(nullptr)
@@ -20,6 +24,21 @@ THVariable::THVariable(std::unique_ptr<thpp::Tensor> data, char requires_grad, c
     , output_nr(0)
     , is_volatile(is_volatile)
     , requires_grad(requires_grad)
+    , backward_hooks(nullptr)
+    , pyobj(nullptr)
+{
+}
+
+THVariable::THVariable(
+  std::unique_ptr<thpp::Tensor> data,
+  std::shared_ptr<torch::autograd::NativeFunction> creator)
+    : data(std::move(data))
+    , creator(creator)
+    , grad(nullptr)
+    , version_counter(new THPVariableVersion())
+    , output_nr(creator->num_outputs++)
+    , is_volatile(creator->is_volatile)
+    , requires_grad(creator->requires_grad)
     , backward_hooks(nullptr)
     , pyobj(nullptr)
 {
@@ -375,7 +394,7 @@ auto THVariable::backward(const Tensor& _gradOutput) -> void {
   }
   if (!grad) {
     std::unique_ptr<thpp::Tensor> copy(gradOutput->clone());
-    grad.reset(new THVariable(std::move(copy), 0, 1));
+    grad.reset(new THVariable(std::move(copy), (char)0, (char)1));
   } else {
     grad->data->cadd(*grad->data, *gradOutput);
   }
@@ -403,10 +422,6 @@ auto THVariable::previousFunctions() -> function_list {
   return function_list();
 }
 
-auto THVariable::numInputs() const -> int {
-  return 0;
-}
-
 auto THVariable::numOutputs() const -> int {
   return 0;
 }
@@ -417,4 +432,23 @@ auto THVariable::requiresGrad() const -> bool {
 
 auto THVariable::isStochastic() const -> bool {
   return false;
+}
+
+auto THVariable::save() const -> SavedVariable {
+  std::unique_ptr<Tensor> d(data->clone_shallow());
+  auto expected_version = **version_counter;
+  std::unique_ptr<THPVariableVersion> ref(version_counter->new_saved_ref());
+  return SavedVariable(std::move(d), expected_version, std::move(ref));
+}
+
+auto SavedVariable::unpack() -> std::unique_ptr<thpp::Tensor>& {
+  if (data) {
+    int current_version = **version;
+    if (expected_version != current_version) {
+      throw std::runtime_error("one of the variables "
+          "needed for gradient computation has been modified by an "
+          "inplace operation");
+    }
+  }
+  return data;
 }

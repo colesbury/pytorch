@@ -185,7 +185,7 @@ if platform.system() == 'Darwin':
 
 main_compile_args = ['-D_THP_CORE']
 main_libraries = ['shm']
-main_link_args = [TH_LIB, THS_LIB, THPP_LIB]
+main_link_args = [TH_LIB, THS_LIB, THPP_LIB, THNN_LIB]
 main_sources = [
     "torch/csrc/Module.cpp",
     "torch/csrc/Generator.cpp",
@@ -196,14 +196,19 @@ main_sources = [
     "torch/csrc/DynamicTypes.cpp",
     "torch/csrc/byte_order.cpp",
     "torch/csrc/utils.cpp",
+    "torch/csrc/utils/object_ptr.cpp",
     "torch/csrc/allocators.cpp",
     "torch/csrc/serialization.cpp",
     "torch/csrc/autograd/init.cpp",
     "torch/csrc/autograd/variable.cpp",
     "torch/csrc/autograd/function.cpp",
+    "torch/csrc/autograd/python_function.cpp",
     "torch/csrc/autograd/native_function.cpp",
+    "torch/csrc/autograd/python_native_function.cpp",
     "torch/csrc/autograd/engine.cpp",
     "torch/csrc/autograd/grad_buffer.cpp",
+    "torch/csrc/autograd/functions/batch_normalization.cpp",
+    "torch/csrc/autograd/functions/init.cpp",
     "torch/csrc/nn/THNN_generic.cpp",
 ]
 
@@ -228,7 +233,7 @@ if WITH_CUDA:
     extra_link_args.append('-Wl,-rpath,' + cuda_lib_path)
     extra_compile_args += ['-DWITH_CUDA']
     extra_compile_args += ['-DCUDA_LIB_PATH=' + cuda_lib_path]
-    main_link_args += [THC_LIB, THCS_LIB]
+    main_link_args += [THC_LIB, THCS_LIB, THCUNN_LIB]
     main_sources += [
         "torch/csrc/cuda/Module.cpp",
         "torch/csrc/cuda/Storage.cpp",

@@ -79,6 +79,7 @@ static bool THPModule_assignStateless(PyObject *self)
   return true;
 #undef INIT_STATELESS
 }
+void initAutogradFunctions();
 //
 // Callback for python part. Used for additional initialization of python classes
 static PyObject * THPModule_initExtension(PyObject *self, PyObject *shm_manager_path)
@@ -90,6 +91,7 @@ static PyObject * THPModule_initExtension(PyObject *self, PyObject *shm_manager_
   libshm_init(THPUtils_bytesAsString(shm_manager_path));
   if (!THPModule_loadClasses(self))         return NULL;
   if (!THPModule_assignStateless(self))     return NULL;
+  initAutogradFunctions();
   return PyBool_FromLong(true);
 }
 

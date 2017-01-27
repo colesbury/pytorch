@@ -383,9 +383,8 @@ def linear(input, weight, bias=None):
 
 def batch_norm(input, running_mean, running_var, weight=None, bias=None,
                training=False, momentum=0.1, eps=1e-5):
-    state = _functions.batchnorm.BatchNorm(
-        running_mean, running_var, training, momentum, eps)
-    return weight and state(input, weight, bias) or state(input)
+    f = _functions.thnn.BatchNorm(running_mean, running_var, training, momentum, eps)
+    return f(input, weight, bias)
 
 
 # loss

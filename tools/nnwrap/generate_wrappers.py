@@ -156,9 +156,12 @@ def wrap_generic():
     defs = OrderedDict()
 
     def should_wrap_function(name):
+        if name.startswith('LookupTable'):
+            return False
         return (name.endswith('updateOutput')
                 or name.endswith('updateGradInput')
-                or name.endswith('accGradParameters'))
+                or name.endswith('accGradParameters')
+                or name.endswith('backward'))
 
     def add_functions(name, functions):
         for fn in functions:
@@ -168,23 +171,24 @@ def wrap_generic():
                 defs[fn.name] = []
             defs[fn.name] += [{
                 'name': name,
-                'arguments': fn.arguments,
+                'arguments': fn.arguments[1:],
             }]
 
     add_functions('nn', thnn_utils.parse_header(thnn_utils.THNN_H_PATH))
     add_functions('cunn', thnn_utils.parse_header(thnn_utils.THCUNN_H_PATH))
 
     wrapper = ''
-    wrapper += '#include "THNN_generic.h"\n\n'
-    wrapper += 'namespace torch { namespace nn {\n\n'
     for name, backends in defs.items():
         wrapper += wrap_generic_function(name, backends)
-    wrapper += '}}\n'
     with open('torch/csrc/nn/THNN_generic.cwrap', 'w') as f:
         f.write(wrapper)
 
     cwrap('torch/csrc/nn/THNN_generic.cwrap', plugins=[
-        GenericNN('torch._thnn._THCUNN'),
+        GenericNN(header=True),
+    ], default_plugins=False, destination='torch/csrc/nn/THNN_generic.h')
+
+    cwrap('torch/csrc/nn/THNN_generic.cwrap', plugins=[
+        GenericNN(),
     ], default_plugins=False)
 
     def genericize_arg(arg):

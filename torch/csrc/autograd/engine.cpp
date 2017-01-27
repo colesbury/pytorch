@@ -14,9 +14,11 @@
 using thpp::Tensor;
 using torch::autograd::Function;
 using torch::autograd::GradBuffer;
-using variable_list = std::vector<std::shared_ptr<THVariable>>;
-using tensor_list = std::vector<std::unique_ptr<Tensor>>;
-using function_list = std::vector<std::shared_ptr<Function>>;
+using torch::autograd::variable_list;
+using torch::autograd::tensor_list;
+// TODO: naming
+using torch::autograd::function_list;
+using function_queue = std::vector<std::shared_ptr<Function>>;
 
 PyObject *THPEngineClass = NULL;
 
@@ -26,7 +28,7 @@ PyObject *THPEngineClass = NULL;
 using ready_queue_type = std::deque<std::pair<std::shared_ptr<Function>, GradBuffer>>;
 
 std::unordered_map<std::shared_ptr<Function>, int> THPEngine_compute_dependencies(
-    function_list& queue,
+    function_queue& queue,
     ready_queue_type& ready)
 {
   std::unordered_map<std::shared_ptr<Function>, int> dependencies;
@@ -56,7 +58,7 @@ void Engine_backward(const variable_list& variables,
                      tensor_list& grad_variables,
                      bool retain_variables) {
   // OK
-  function_list creators;
+  function_queue creators;
   ready_queue_type ready;
 
   bool did_leaf_backward = false;
