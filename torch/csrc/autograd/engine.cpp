@@ -37,6 +37,8 @@ std::unordered_map<std::shared_ptr<Function>, int> THPEngine_compute_dependencie
     auto fn = std::move(queue.back()); queue.pop_back();
     for (auto& prev_fn_pair : fn->previousFunctions()) {
       auto& prev_fn = prev_fn_pair.first;
+      if (!prev_fn)
+        continue;
       if (dynamic_cast<THVariable*>(prev_fn.get()))
         continue;
       // check for stochastic function
@@ -76,7 +78,7 @@ void Engine_backward(const variable_list& variables,
       creators.push_back(var->creator);
       if (var->creator->requiresGrad()) {
         GradBuffer buf(var->creator->numOutputs());
-        buf.addGrad(var->output_nr, std::move(grad));
+        buf.addGrad(var->output_nr, THVariable::of(std::move(grad)));
         ready.emplace_front(var->creator, std::move(buf));
       }
     }
@@ -93,9 +95,11 @@ void Engine_backward(const variable_list& variables,
   while (ready.size() > 0) {
     auto ready_pair = std::move(ready.back()); ready.pop_back();
     auto& fn = ready_pair.first;
-    auto fn_grad_buffers = ready_pair.second.tensors();
 
-    auto grad_inputs = fn->backward(fn_grad_buffers, retain_variables);
+    auto grad_inputs = fn->apply(GradBuffer::variables(std::move(ready_pair.second)));
+    if (!retain_variables) {
+      fn->releaseVariables();
+    }
     auto previous_functions = fn->previousFunctions();
 
     if (grad_inputs.size() != previous_functions.size()) {
@@ -104,13 +108,17 @@ void Engine_backward(const variable_list& variables,
 
     int size = grad_inputs.size();
     for (int i = 0; i < size; ++i) {
-      auto& grad_prev = grad_inputs[i];
+      auto& grad_input = grad_inputs[i];
       auto& prev_fn = previous_functions[i].first;
       int output_nr = previous_functions[i].second;
 
+      if (!prev_fn) {
+        continue;
+      }
+
       if (auto var = dynamic_cast<THVariable*>(prev_fn.get())) {
-        if (var->requiresGrad()) {
-          var->backward(*grad_prev);
+        if (var->requiresGrad() && grad_input) {
+          var->backward(*grad_input->data);
         }
         continue;
       }
@@ -134,24 +142,24 @@ void Engine_backward(const variable_list& variables,
         if (not_ready_it == not_ready.end()) {
           // The function is ready and no buffers have been allocated for it
           GradBuffer prev_buffer(prev_fn->numOutputs());
-          prev_buffer.addGrad(output_nr, std::move(grad_prev));
+          prev_buffer.addGrad(output_nr, std::move(grad_input));
           ready.emplace_front(prev_fn, std::move(prev_buffer));
         } else {
           // The function is ready and it already has a buffer allocated.
           auto prev_buffer = std::move(not_ready_it->second);
           not_ready.erase(not_ready_it);
-          prev_buffer.addGrad(output_nr, std::move(grad_prev));
+          prev_buffer.addGrad(output_nr, std::move(grad_input));
           ready.emplace_front(prev_fn, std::move(prev_buffer));
         }
       } else {
         // Allocate a buffer if necessary and accumulate gradient
         if (not_ready_it == not_ready.end()) {
           GradBuffer prev_buffer(prev_fn->numOutputs());
-          prev_buffer.addGrad(output_nr, std::move(grad_prev));
+          prev_buffer.addGrad(output_nr, std::move(grad_input));
           not_ready.emplace(prev_fn.get(), std::move(prev_buffer));
         } else {
           auto &prev_buffer = not_ready_it->second;
-          prev_buffer.addGrad(output_nr, std::move(grad_prev));
+          prev_buffer.addGrad(output_nr, std::move(grad_input));
         }
       }
     }

@@ -7,7 +7,7 @@ namespace torch { namespace autograd {
 
 using thpp::Tensor;
 
-auto BatchNormForward::forward(const variable_list& inputs) -> variable_list {
+auto BatchNormForward::apply(const variable_list& inputs) -> variable_list {
   if (inputs.size() != 3) throw std::runtime_error("expected three inputs");
 
   auto& input = inputs[0];
@@ -25,8 +25,8 @@ auto BatchNormForward::forward(const variable_list& inputs) -> variable_list {
   torch::nn::BatchNormalization_updateOutput(
       input->data.get(),
       output.get(),
-      weight->data.get(),
-      bias->data.get(),
+      weight ? weight->data.get() : nullptr,
+      bias ? bias->data.get() : nullptr,
       running_mean.get(),
       running_var.get(),
       save_mean.get(),
@@ -47,13 +47,12 @@ auto BatchNormForward::forward(const variable_list& inputs) -> variable_list {
       training,
       momentum,
       eps);
-  printf("creator: %p\n", creator.get());
   variable_list results(1);
   results[0] = std::make_shared<THVariable>(std::move(output), creator);
   return results;
 };
 
-auto BatchNormBackward::backward(const tensor_list& gradOutputs, bool retain_variables) -> tensor_list {
+auto BatchNormBackward::apply(const variable_list& gradOutputs) -> variable_list {
   auto& input = this->input.unpack();
   auto& weight = this->weight.unpack();
   auto& bias = this->bias.unpack();
@@ -65,17 +64,19 @@ auto BatchNormBackward::backward(const tensor_list& gradOutputs, bool retain_var
   if (weight) {
     gradWeight = weight->newTensor();
     gradWeight->resizeAs(*weight);
+    gradWeight->zero();
   }
 
   std::unique_ptr<Tensor> gradBias;
   if (bias) {
     gradBias = bias->newTensor();
     gradBias->resizeAs(*bias);
+    gradBias->zero();
   }
 
   torch::nn::BatchNormalization_backward(
       input.get(),
-      gradOutputs[0].get(),
+      gradOutputs[0]->data.get(),
       gradInput.get(),
       gradWeight.get(),
       gradBias.get(),
@@ -88,10 +89,10 @@ auto BatchNormBackward::backward(const tensor_list& gradOutputs, bool retain_var
       1.0,
       eps);
 
-  tensor_list results(3);
-  results[0] = std::move(gradInput);
-  results[1] = std::move(gradWeight);
-  results[2] = std::move(gradBias);
+  variable_list results(3);
+  results[0] = THVariable::of(std::move(gradInput));
+  results[1] = THVariable::of(std::move(gradWeight));
+  results[2] = THVariable::of(std::move(gradBias));
   return results;
 };
 

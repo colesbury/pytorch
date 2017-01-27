@@ -5,6 +5,7 @@
 #include "torch/csrc/DynamicTypes.h"
 #include "torch/csrc/cuda/AutoGPU.h"
 #include "torch/csrc/autograd/native_function.h"
+#include "torch/csrc/autograd/python_native_function.h"
 
 
 using namespace torch;
@@ -27,6 +28,9 @@ THVariable::THVariable(
     , backward_hooks(nullptr)
     , pyobj(nullptr)
 {
+  if (!this->data) {
+    throw std::runtime_error("Variable data is NULL");
+  }
 }
 
 THVariable::THVariable(
@@ -42,6 +46,9 @@ THVariable::THVariable(
     , backward_hooks(nullptr)
     , pyobj(nullptr)
 {
+  if (!this->data) {
+    throw std::runtime_error("Variable data is NULL");
+  }
 }
 
 bool THVariable::is_cuda()
@@ -181,7 +188,7 @@ PyObject *THPVariable_get_creator(THPVariable *self)
   if (!var.creator) {
     Py_RETURN_NONE;
   }
-  return var.creator->pythonObject();
+  return functionToPyObject(var.creator);
 }
 
 PyObject * THPVariable_get_data(THPVariable *self)
@@ -400,19 +407,15 @@ auto THVariable::backward(const Tensor& _gradOutput) -> void {
   }
 }
 
-auto THVariable::backward(const tensor_list& gradOutputs, bool retain_variables) -> tensor_list {
+auto THVariable::apply(const variable_list& gradOutputs) -> variable_list {
   if (creator || **version_counter != 0) {
     throw std::runtime_error("leaf variable was used in an inplace operation");
   }
   if (gradOutputs.size() != 1) {
     throw std::runtime_error("incorrect number of gradOutputs");
   }
-  backward(*gradOutputs[0]);
-  return tensor_list();
-}
-
-auto THVariable::pythonObject() -> PyObject* {
-  throw std::runtime_error("unsupported operation pythonObject() on Variable");
+  backward(*gradOutputs[0]->data);
+  return variable_list();
 }
 
 auto THVariable::previousFunctions() -> function_list {

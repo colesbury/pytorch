@@ -1,6 +1,7 @@
 #include "grad_buffer.h"
 
 #include <THPP/THPP.h>
+#include "torch/csrc/autograd/variable.h"
 
 namespace torch { namespace autograd {
 
@@ -8,8 +9,12 @@ GradBuffer::GradBuffer(size_t size)
   : buffer(size)
   {}
 
-void GradBuffer::addGrad(size_t pos, std::unique_ptr<thpp::Tensor> tensor) {
+auto GradBuffer::addGrad(size_t pos, std::shared_ptr<THVariable>&& var) -> void {
   auto& item = buffer[pos];
+  if (!var) {
+    return;
+  }
+  auto& tensor = var->data;
   if (!item.first) {
     buffer[pos] = std::make_pair<>(std::move(tensor), true);
   } else {
@@ -21,21 +26,17 @@ void GradBuffer::addGrad(size_t pos, std::unique_ptr<thpp::Tensor> tensor) {
   }
 }
 
-std::vector<std::unique_ptr<thpp::Tensor>> GradBuffer::tensors() {
-  std::vector<std::unique_ptr<thpp::Tensor>> result(buffer.size());
-  for (size_t i = 0; i != buffer.size(); ++i) {
-    result[i] = std::move(buffer[i].first);
+auto GradBuffer::variables(GradBuffer&& g) -> std::vector<std::shared_ptr<THVariable>> {
+  auto buffer = std::move(g.buffer);
+  int size = buffer.size();
+  std::vector<std::shared_ptr<THVariable>> result(size);
+  for (int i = 0; i != size; ++i) {
+    if (buffer[i].first) {
+      result[i] = std::make_shared<THVariable>(
+          std::move(buffer[i].first), 0, 1);
+    }
   }
   return result;
 }
-
-thpp::Tensor& GradBuffer::operator[](size_t pos) {
-  return *buffer[pos].first;
-}
-
-const thpp::Tensor& GradBuffer::operator[](size_t pos) const {
-  return *buffer[pos].first;
-}
-
 
 }}  // namespace torch::autograd

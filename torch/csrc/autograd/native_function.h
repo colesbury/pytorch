@@ -21,16 +21,16 @@ struct FunctionFlags {
   function_list previous_functions;
 };
 
-struct NativeForwardFunction {
-  virtual variable_list forward(const variable_list& inputs) = 0;
-
-  static inline SavedVariable save_optional(THVariable* var) {
-    return var ? var->save() : SavedVariable();
-  }
-  static FunctionFlags flags(const variable_list& inputs);
-};
-
 struct NativeFunction : public Function {
+  NativeFunction()
+    : num_outputs(0)
+    , previous_functions()
+    , requires_grad(false)
+    , is_volatile(false)
+    , is_stochastic(false)
+    , python_object(nullptr)
+    {}
+
   NativeFunction(FunctionFlags flags)
     : num_outputs(0)
     , previous_functions(std::move(flags.previous_functions))
@@ -40,9 +40,13 @@ struct NativeFunction : public Function {
     , python_object(nullptr)
     {}
 
-  virtual tensor_list backward(const tensor_list& gradOutputs, bool retain_variables) = 0;
+  virtual variable_list apply(const variable_list& gradOutputs) = 0;
 
-  virtual PyObject* pythonObject() override;
+  static inline SavedVariable save_optional(THVariable* var) {
+    return var ? var->save() : SavedVariable();
+  }
+  static FunctionFlags flags(const variable_list& inputs);
+
   virtual function_list previousFunctions() override {
      return previous_functions;
   }

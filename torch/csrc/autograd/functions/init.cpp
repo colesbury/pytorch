@@ -5,6 +5,7 @@
 using namespace torch::autograd;
 
 static PyTypeObject BatchNormClass;
+static PyTypeObject BatchNormBackwardClass;
 
 struct BatchNormCtor {
   BatchNormForward* operator()(PyObject* args) {
@@ -30,10 +31,24 @@ struct BatchNormCtor {
   }
 };
 
+struct NoCtor {
+  NativeFunction* operator()(PyObject* args) {
+    throw std::runtime_error("Cannot construct");
+  }
+};
+
+template<typename C, typename T>
+static void addClass(PyObject* module, PyTypeObject& type, const char* name)
+{
+  createForwardFunctionPyTypeObject<T>(type, name);
+  Py_INCREF(&type);
+  PyModule_AddObject(module, name, (PyObject*)&type);
+  registerNativeFunction(typeid(C), &type);
+}
+
 void initAutogradFunctions()
 {
   THPObjectPtr module = PyImport_ImportModule("torch.nn._functions.thnn");
-  createFunctionPyTypeObject<BatchNormCtor>(BatchNormClass, "BatchNorm");
-  Py_INCREF(&BatchNormClass);
-  PyModule_AddObject(module.get(), "BatchNorm", (PyObject*)&BatchNormClass);
+  addClass<BatchNormForward, BatchNormCtor>(module, BatchNormClass, "BatchNorm");
+  addClass<BatchNormBackward, NoCtor>(module, BatchNormBackwardClass, "BatchNormBackward");
 }

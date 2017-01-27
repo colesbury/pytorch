@@ -73,7 +73,7 @@ struct SavedVariable {
   std::unique_ptr<thpp::Tensor>& unpack();
 };
 
-using torch::autograd::tensor_list;
+using torch::autograd::variable_list;
 using torch::autograd::function_list;
 
 
@@ -103,11 +103,17 @@ struct THVariable : public torch::autograd::Function {
   bool is_cuda();
   bool is_sparse();
 
+  static inline std::shared_ptr<THVariable> of(std::unique_ptr<thpp::Tensor> data) {
+    if (!data) {
+      return std::shared_ptr<THVariable>();
+    }
+    return std::make_shared<THVariable>(std::move(data), 0, 0);
+  }
+
   thpp::TensorType tensor_type();
 
   void backward(const thpp::Tensor& gradOutput);
-  virtual tensor_list backward(const tensor_list& gradOutputs, bool retain_variables) override;
-  virtual PyObject* pythonObject() override;
+  virtual variable_list apply(const variable_list& gradOutputs) override;
 
   virtual function_list previousFunctions() override;
   virtual int numOutputs() const override;

@@ -30,9 +30,9 @@ struct Function {
   Function(Function&& other) = delete;
   virtual ~Function() {};
 
-  virtual tensor_list backward(const tensor_list& gradOutputs, bool retain_variables) = 0;
-  virtual PyObject* pythonObject() = 0;
+  virtual variable_list apply(const variable_list& inputs) = 0;
 
+  virtual inline void releaseVariables() {}
   virtual function_list previousFunctions() = 0;
   virtual int numOutputs() const = 0;
   virtual bool requiresGrad() const = 0;
@@ -43,15 +43,14 @@ struct PyFunctionWrapper : public Function {
   PyFunctionWrapper(PyObject *obj);
   virtual ~PyFunctionWrapper();
 
-  virtual tensor_list backward(const tensor_list& gradOutputs, bool retain_variables) override;
-  virtual PyObject* pythonObject() override;
+  virtual variable_list apply(const variable_list& inputs) override;
+  virtual void releaseVariables() override;
 
   virtual function_list previousFunctions() override;
   virtual int numOutputs() const override;
   virtual bool requiresGrad() const override;
   virtual bool isStochastic() const override;
 
-private:
   THPObjectPtr pyobj;
 };
 

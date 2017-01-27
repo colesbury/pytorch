@@ -8,6 +8,7 @@
 #include "THP.h"
 #include "DynamicTypes.h"
 #include "torch/csrc/autograd/python_function.h"
+#include "torch/csrc/autograd/python_native_function.h"
 
 #ifdef WITH_CUDA
 #include "cuda/AutoGPU.h"
@@ -427,7 +428,7 @@ PyObject *THPFunction_do_forward(THPFunction *self, PyObject *inputs)
         auto& input_var_ = *input_var->cdata;
         PyObject *prev_fn;
         if (input_var_.creator) {
-          prev_fn = input_var_.creator->pythonObject();
+          prev_fn = functionToPyObject(input_var_.creator);
         } else {
           prev_fn = (PyObject*)input_var;
           Py_INCREF(prev_fn);
@@ -962,7 +963,7 @@ PyFunctionWrapper::~PyFunctionWrapper() {}
 
 static THPObjectPtr _do_backward_name;
 
-auto PyFunctionWrapper::backward(const tensor_list& gradOutputs, bool retain_variables) -> tensor_list {
+auto PyFunctionWrapper::apply(const variable_list& gradOutputs) -> variable_list {
   // FIXME acquire GIL
   THPObjectPtr pyGradOutputs = PyTuple_New(gradOutputs.size());
   if (!pyGradOutputs) throw python_error();
@@ -970,7 +971,7 @@ auto PyFunctionWrapper::backward(const tensor_list& gradOutputs, bool retain_var
   for (size_t i = 0; i != gradOutputs.size(); ++i) {
     PyObject* obj;
     if (gradOutputs[i]) {
-      obj = createPyObject(*gradOutputs[i]);
+      obj = createPyObject(*gradOutputs[i]->data);
       if (!obj) throw python_error();
     } else {
       obj = Py_None;
@@ -987,29 +988,23 @@ auto PyFunctionWrapper::backward(const tensor_list& gradOutputs, bool retain_var
       pyobj.get(),
       _do_backward_name.get(),
       pyGradOutputs.get(),
-      retain_variables ? Py_True : Py_False,
+      Py_True,
       NULL);
   if (!r) throw python_error();
 
   auto num_outputs = PyTuple_GET_SIZE(r.get());
-  tensor_list results(num_outputs);
+  variable_list results(num_outputs);
   for (int i = 0; i != num_outputs; ++i) {
     PyObject* obj = PyTuple_GET_ITEM(r.get(), i);
     if (obj != Py_None) {
       if (!THPModule_isTensor(obj)) {
         throw std::runtime_error(std::string("expected Tensor (got '") + Py_TYPE(obj)->tp_name + "')'");
       }
-      results[i] = createTensor(obj);
+      results[i] = std::make_shared<THVariable>(createTensor(obj), 0, 1);
     }
   }
   // FIXME release GIL
   return results;
-}
-
-auto PyFunctionWrapper::pythonObject() -> PyObject* {
-  PyObject* obj = pyobj.get();
-  Py_INCREF(obj);
-  return obj;
 }
 
 auto PyFunctionWrapper::previousFunctions() -> function_list {
@@ -1030,6 +1025,13 @@ auto PyFunctionWrapper::previousFunctions() -> function_list {
     }
   }
   return previous_functions;
+}
+
+auto PyFunctionWrapper::releaseVariables() -> void {
+  auto f = (THPFunction*) pyobj.get();
+  delete f->saved_variables;
+  f->saved_variables = nullptr;
+  f->has_freed_buffers = 1;
 }
 
 auto PyFunctionWrapper::numOutputs() const -> int {

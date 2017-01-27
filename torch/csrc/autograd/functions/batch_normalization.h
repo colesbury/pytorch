@@ -8,7 +8,7 @@
 
 namespace torch { namespace autograd {
 
-struct BatchNormForward : public NativeForwardFunction {
+struct BatchNormForward : public NativeFunction {
   BatchNormForward(
       std::unique_ptr<thpp::Tensor> running_mean,
       std::unique_ptr<thpp::Tensor> running_var,
@@ -21,7 +21,7 @@ struct BatchNormForward : public NativeForwardFunction {
     , momentum(momentum)
     , eps(eps) {}
 
-  virtual variable_list forward(const variable_list& inputs) override;
+  virtual variable_list apply(const variable_list& inputs) override;
 
   std::unique_ptr<thpp::Tensor> running_mean;
   std::unique_ptr<thpp::Tensor> running_var;
@@ -55,7 +55,7 @@ struct BatchNormBackward : public NativeFunction {
     , momentum(momentum)
     , eps(eps) {}
 
-  virtual tensor_list backward(const tensor_list& gradOutputs, bool retain_variables) override;
+  virtual variable_list apply(const variable_list& gradOutputs) override;
 
   std::unique_ptr<thpp::Tensor> running_mean;
   std::unique_ptr<thpp::Tensor> running_var;
