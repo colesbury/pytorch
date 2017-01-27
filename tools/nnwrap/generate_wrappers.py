@@ -147,6 +147,8 @@ def wrap_generic_function(name, backends):
         declaration += '      arguments:\n'
         for arg in backend['arguments']:
             declaration += '       - arg: ' + arg.type + ' ' + arg.name + '\n'
+            if arg.is_optional:
+                declaration += '         optional: True\n'
     declaration += ']]\n\n\n'
     return declaration
 
