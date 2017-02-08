@@ -11,12 +11,14 @@ auto Function::flags(const variable_list& inputs) -> FunctionFlags {
   FunctionFlags f;
   f.requires_grad = false;
   f.is_volatile = false;
+  f.needs_grad.resize(num_inputs, false);
   f.previous_functions.resize(num_inputs);
   for (int i = 0; i != num_inputs; ++i) {
     auto& var = inputs[i];
     if (var) {
       f.requires_grad |= var->requires_grad;
       f.is_volatile |= var->is_volatile;
+      f.needs_grad[i] = var->requires_grad;
       if (var->creator) {
         f.previous_functions[i] = std::make_pair<>(var->creator, var->output_nr);
       } else {
@@ -26,6 +28,34 @@ auto Function::flags(const variable_list& inputs) -> FunctionFlags {
   }
   f.requires_grad &= !f.is_volatile;
   return f;
+}
+
+auto Function::name() -> std::string {
+  return std::string(typeid(*this).name());
+}
+
+auto Function::call_hooks(variable_list inputs) -> variable_list {
+  if (hooks.empty()) {
+    return inputs;
+  }
+
+  variable_list outputs(inputs.size());
+  for (size_t i = 0; i < inputs.size(); ++i) {
+    if (hooks[i]) {
+      outputs[i] = (*hooks[i])(inputs[i]);
+    } else {
+      outputs[i] = inputs[i];
+    }
+  }
+  return outputs;
+}
+
+auto Function::await(const variable_list& inputs) -> void {
+  for (auto& input : inputs) {
+    if (input && input->event) {
+      input->event->await(*input);
+    }
+  }
 }
 
 }} // namespace torch::autograd

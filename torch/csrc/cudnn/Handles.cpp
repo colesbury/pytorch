@@ -2,7 +2,10 @@
 
 #include <unordered_map>
 #include <mutex>
+#include <THC/THC.h>
 #include "Exceptions.h"
+
+extern THCState* state;
 
 namespace torch { namespace cudnn {
 
@@ -31,8 +34,11 @@ cudnnHandle_t getCudnnHandle()
   int device;
   CUDA_CHECK(cudaGetDevice(&device));
 
+  // TODO: NOT THREAD SAFE
   std::lock_guard<std::mutex> guard(mutex);
-  return handles[device].handle;
+  auto handle = handles[device].handle;
+  CHECK(cudnnSetStream(handle, THCState_getCurrentStream(state)));
+  return handle;
 }
 
 }} // namespace torch::cudnn

@@ -224,6 +224,7 @@ THNN_LIB = os.path.join(lib_path, 'libTHNN.so.1')
 THCUNN_LIB = os.path.join(lib_path, 'libTHCUNN.so.1')
 THPP_LIB = os.path.join(lib_path, 'libTHPP.so.1')
 THD_LIB = os.path.join(lib_path, 'libTHD.so.1')
+NCCL_LIB = os.path.join(lib_path, 'libnccl.so.1')
 if platform.system() == 'Darwin':
     TH_LIB = os.path.join(lib_path, 'libTH.1.dylib')
     THS_LIB = os.path.join(lib_path, 'libTHS.1.dylib')
@@ -233,6 +234,7 @@ if platform.system() == 'Darwin':
     THCUNN_LIB = os.path.join(lib_path, 'libTHCUNN.1.dylib')
     THPP_LIB = os.path.join(lib_path, 'libTHPP.1.dylib')
     THD_LIB = os.path.join(lib_path, 'libTHD.1.dylib')
+    NCCL_LIB = os.path.join(lib_path, 'libnccl.1.dylib')
 
 main_compile_args = ['-D_THP_CORE']
 main_libraries = ['shm']
@@ -249,18 +251,23 @@ main_sources = [
     "torch/csrc/byte_order.cpp",
     "torch/csrc/utils.cpp",
     "torch/csrc/utils/object_ptr.cpp",
+    "torch/csrc/utils/tuple_parser.cpp",
     "torch/csrc/allocators.cpp",
     "torch/csrc/serialization.cpp",
     "torch/csrc/autograd/init.cpp",
     "torch/csrc/autograd/engine.cpp",
     "torch/csrc/autograd/function.cpp",
     "torch/csrc/autograd/variable.cpp",
+    "torch/csrc/autograd/variable_event.cpp",
     "torch/csrc/autograd/grad_buffer.cpp",
     "torch/csrc/autograd/python_function.cpp",
     "torch/csrc/autograd/python_cpp_function.cpp",
     "torch/csrc/autograd/python_variable.cpp",
     "torch/csrc/autograd/python_engine.cpp",
+    "torch/csrc/autograd/python_hook.cpp",
     "torch/csrc/autograd/functions/batch_normalization.cpp",
+    "torch/csrc/autograd/functions/broadcast.cpp",
+    "torch/csrc/autograd/functions/convolution.cpp",
     "torch/csrc/autograd/functions/init.cpp",
     "torch/csrc/nn/THNN_generic.cpp",
 ]
@@ -301,7 +308,7 @@ if WITH_CUDA:
     extra_compile_args += ['-DWITH_CUDA']
     extra_compile_args += ['-DCUDA_LIB_PATH=' + cuda_lib_path]
     main_libraries += ['cudart']
-    main_link_args += [THC_LIB, THCS_LIB, THCUNN_LIB]
+    main_link_args += [THC_LIB, THCS_LIB, THCUNN_LIB, NCCL_LIB]
     main_sources += [
         "torch/csrc/cuda/Module.cpp",
         "torch/csrc/cuda/Storage.cpp",
@@ -310,6 +317,7 @@ if WITH_CUDA:
         "torch/csrc/cuda/AutoGPU.cpp",
         "torch/csrc/cuda/utils.cpp",
         "torch/csrc/cuda/serialization.cpp",
+        "torch/csrc/nccl/reductions.cpp",
     ]
 
 if WITH_CUDNN:

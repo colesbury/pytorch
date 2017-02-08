@@ -266,6 +266,7 @@ INSTALL(FILES
           THCSortUtils.cuh
           THCAllocator.h
           THCCachingAllocator.h
+          THCCachingAllocator.hpp
           THCCachingHostAllocator.h
           THCDeviceUtils.cuh
           THCDeviceTensor.cuh

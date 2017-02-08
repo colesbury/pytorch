@@ -38,15 +38,16 @@ class Gather(Function):
 
 class Scatter(Function):
 
-    def __init__(self, target_gpus, chunk_sizes=None, dim=0):
+    def __init__(self, target_gpus, chunk_sizes=None, dim=0, streams=None):
         super(Scatter, self).__init__()
         self.target_gpus = target_gpus
         self.chunk_sizes = chunk_sizes
         self.dim = dim
+        self.streams = streams
 
     def forward(self, input):
         self.input_device = input.get_device() if input.is_cuda else -1
-        return comm.scatter(input, self.target_gpus, self.chunk_sizes, self.dim)
+        return comm.scatter(input, self.target_gpus, self.chunk_sizes, self.dim, self.streams)
 
     def backward(self, *grad_output):
         return comm.gather(grad_output, self.dim, self.input_device)

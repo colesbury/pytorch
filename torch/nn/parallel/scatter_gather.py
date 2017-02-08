@@ -2,13 +2,13 @@ from torch.autograd import Variable
 from ._functions import Scatter, Gather
 
 
-def scatter(input, target_gpus):
+def scatter(input, target_gpus, streams=None):
     """Slices a given variable into approximately equal chunks and distributes
        them accross given GPUs
     """
     def scatter_map(obj):
         if isinstance(obj, Variable):
-            return Scatter(target_gpus)(obj)
+            return Scatter(target_gpus, streams=streams)(obj)
         return tuple(zip(*map(scatter_map, obj)))
     return scatter_map(input)
 

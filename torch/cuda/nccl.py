@@ -5,7 +5,8 @@ import torch.cuda
 from torch.backends.cudnn import int_array
 
 lib = None
-libname = 'libnccl.so'
+libname = 'libnccl.so.1'
+streams = None
 
 __all__ = ['all_reduce', 'reduce', 'broadcast', 'all_gather', 'reduce_scatter']
 
@@ -42,6 +43,9 @@ def is_available(tensors):
         except Exception:
             warnings.warn('NCCL library not found. Check your LD_LIBRARY_PATH')
             return False
+
+        global streams
+        streams = [torch.cuda.Stream(i, priority=-1) for i in range(torch.cuda.device_count())]
 
     return True
 

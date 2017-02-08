@@ -401,6 +401,76 @@ static PyObject * THPModule_cat(PyObject *_unused, PyObject *args)
   return PyObject_Call(method, args, NULL);
 }
 
+static PyObject * THPModule_cloneModule(PyObject *_unused, PyObject *args)
+{
+  PyObject* root_module;
+  int num_copies;
+  if (!PyArg_ParseTuple(args, "Oi", &root_module, &num_copies)) {
+    return NULL;
+  }
+
+  THPObjectPtr modules = PyObject_CallMethod(root_module, "modules", "");
+  if (!modules) return NULL;
+
+  THPObjectPtr itr = PyObject_GetIter(modules.get());
+  if (!itr) return NULL;
+
+  std::vector<THPObjectPtr> module_list;
+  THPObjectPtr tmp;
+  while ( (tmp = PyIter_Next(itr.get())) ) {
+    module_list.emplace_back(std::move(tmp));
+  }
+  if (PyErr_Occurred()) {
+    return NULL;
+  }
+
+  THPObjectPtr new_args = PyTuple_New(0);
+  PyObject* new_kwargs = NULL;
+
+  static THPObjectPtr dict_str;
+  if (!dict_str) {
+    dict_str = PyUnicode_InternFromString("__dict__");
+  }
+
+  std::vector<std::vector<THPObjectPtr>> copies(num_copies);
+  for (auto& obj : module_list) {
+    THPObjectPtr dict = PyObject_GetAttr(obj.get(), dict_str.get());
+    if (!dict) return NULL;
+
+    PyTypeObject* type = Py_TYPE(obj.get());
+    if (!type->tp_new) return PyErr_Format(PyExc_TypeError, "object has no tp_new");
+
+    for (int i = 0; i < num_copies; ++i) {
+      THPObjectPtr copy = type->tp_new(type, new_args.get(), new_kwargs);
+      if (!copy) return NULL;
+
+      THPObjectPtr dict_copy = PyDict_Copy(dict.get());
+      if (!dict_copy) return NULL;
+
+      if (PyObject_SetAttr(copy.get(), dict_str.get(), dict_copy.get()) < 0) {
+        return NULL;
+      }
+
+      copies[i].emplace_back(std::move(copy));
+    }
+  }
+
+  THPObjectPtr list = PyList_New(num_copies);
+  for (size_t copy = 0; copy < copies.size(); copy++) {
+    auto& vector = copies[copy];
+    THPObjectPtr sublist = PyList_New(vector.size());
+    for (size_t i = 0; i < vector.size(); i++) {
+      auto tmp = vector[i].release();
+      // printf("i = %d tmp = %p\n", (int)i, tmp);
+      PyList_SET_ITEM(sublist.get(), (Py_ssize_t)i, tmp);
+    }
+    PyList_SET_ITEM(list.get(), (Py_ssize_t)copy, sublist.release());
+  }
+  return list.release();
+  // Py_RETURN_NONE;
+}
+
+
 PyObject *THPModule_safeCall(PyObject *_unused, PyObject *args, PyObject *kwargs)
 {
   PyObject *result = NULL;
@@ -529,6 +599,7 @@ static PyMethodDef TorchMethods[] = {
 #endif
   {"_safe_call",      (PyCFunction)THPModule_safeCall,          METH_VARARGS | METH_KEYWORDS, NULL},
   {"_set_default_tensor_type", (PyCFunction)THPModule_setDefaultTensorType, METH_O, NULL},
+  {"_cloneModule",    (PyCFunction)THPModule_cloneModule,       METH_VARARGS, NULL},
   {"get_num_threads", (PyCFunction)THPModule_getNumThreads,     METH_NOARGS,  NULL},
   {"set_num_threads", (PyCFunction)THPModule_setNumThreads,     METH_O,       NULL},
   {"from_numpy",      (PyCFunction)THPModule_fromNumpy,         METH_O,       NULL},

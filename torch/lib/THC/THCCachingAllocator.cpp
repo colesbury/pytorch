@@ -1,11 +1,15 @@
 #include "THCCachingAllocator.h"
+#include "THCCachingAllocator.hpp"
 
 #include <cuda_runtime_api.h>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 //
 // Yet another caching allocator for CUDA device allocations.
@@ -17,7 +21,7 @@
 //   split. If no block is found, the allocator will delegate to cudaMalloc.
 // - If the cudaMalloc fails, the allocator will free all cached blocks that
 //   are not split and retry the allocation.
-// - Large (>1MB) and small allocation requestss are handled separately. Large
+// - Large (>1MB) and small allocation requests are handled separately. Large
 //   allocation requests can be filled by a cudaMalloc call of the exact size.
 //   Small requests will allocate and split a 1MB buffer, if necessary.
 //
@@ -34,18 +38,22 @@ const size_t kRoundSmall = 512;     // round up small allocs to 512 bytes
 const size_t kRoundLarge = 131072;  // round up large allocs to 128 KiB
 const size_t kSmallAlloc = 1048576; // largest "small" allocation is 1 MiB
 
+typedef std::shared_ptr<THCStream> THCStreamPtr;
+typedef std::unordered_set<THCStreamPtr> stream_set;
+
 struct Block {
-  int           device;     // gpu
-  cudaStream_t  stream;     // allocation stream
-  size_t        size;       // block size in bytes
-  char*         ptr;        // memory address
-  bool          allocated;  // in-use flag
-  Block*        prev;       // prev block if split from a larger allocation
-  Block*        next;       // next block if split from a larger allocation
+  int           device;        // gpu
+  cudaStream_t  stream;        // allocation stream
+  stream_set    other_streams; // uses from non-allocation stream
+  size_t        size;          // block size in bytes
+  char*         ptr;           // memory address
+  bool          allocated;     // in-use flag
+  Block*        prev;          // prev block if split from a larger allocation
+  Block*        next;          // next block if split from a larger allocation
 
   Block(int device, cudaStream_t stream, size_t size, char* ptr=NULL) :
-      device(device), stream(stream), size(size), ptr(ptr), allocated(0),
-      prev(NULL), next(NULL) { }
+      device(device), stream(stream), other_streams(), size(size), ptr(ptr),
+      allocated(false), prev(NULL), next(NULL) {}
 };
 
 static bool BlockComparator(const Block* a, const Block* b)
@@ -158,17 +166,45 @@ struct THCCachingAllocator
     }
 
     Block* block = it->second;
+    if (block->other_streams.size() > 0) {
+      printf("awaiting streams\n");
+      cudaError_t err = await_streams(block);
+      if (err != cudaSuccess) {
+        return err;
+      }
+    }
+
+    block->allocated = false;
     allocated_blocks.erase(it);
 
     bool small = block->size <= kSmallAlloc;
     auto& free_blocks = small ? large_blocks : small_blocks;
     try_merge_blocks(block, block->prev, free_blocks);
     try_merge_blocks(block, block->next, free_blocks);
-
-    block->allocated = false;
     free_blocks.insert(block);
 
     return cudaSuccess;
+  }
+
+  cudaError_t recordStream(void* ptr, THCStream* stream)
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!ptr) {
+      return cudaSuccess;
+    }
+
+    auto it = allocated_blocks.find(ptr);
+    if (it == allocated_blocks.end()) {
+      return cudaErrorInvalidDevicePointer;
+    }
+
+    THCStreamPtr stream_ptr(stream, &THCStream_free);
+    if (stream) {
+      THCStream_retain(stream);
+    }
+
+    Block* block = it->second;
+    block->other_streams.insert(std::move(stream_ptr));
   }
 
   /** returns cached blocks to the system allocator */
@@ -227,6 +263,37 @@ struct THCCachingAllocator
     std::lock_guard<std::mutex> lock(mutex);
     cacheInfoAux(large_blocks, dev_id, total, largest);
     cacheInfoAux(small_blocks, dev_id, total, largest);
+  }
+
+  cudaError_t await_streams(Block* block)
+  {
+    cudaError_t err;
+
+    int prev_device;
+    err = cudaGetDevice(&prev_device);
+    if (err != cudaSuccess) return err;
+
+    err = cudaSetDevice(block->device);
+    if (err != cudaSuccess) return err;
+
+    cudaEvent_t event;
+    err = cudaEventCreateWithFlags(&event, cudaEventDisableTiming);
+    if (err != cudaSuccess) return err;
+
+    stream_set streams(std::move(block->other_streams));
+    for (auto it = streams.begin(); it != streams.end(); ++it) {
+      auto& stream = *it;
+
+      err = cudaEventRecord(event, stream->stream);
+      if (err != cudaSuccess) break;
+
+      err = cudaStreamWaitEvent(block->stream, event, 0);
+      if (err != cudaSuccess) break;
+    }
+
+    THCudaCheckWarn(cudaEventDestroy(event));
+    THCudaCheckWarn(cudaSetDevice(prev_device));
+    return err;
   }
 
   /** combine previously split blocks */
@@ -374,9 +441,14 @@ THC_API THCDeviceAllocator* THCCachingAllocator_get(void)
   return &device_allocator;
 }
 
-THC_API void* THCCachingAllocator_getBaseAllocation(void *ptr, size_t *size)
+THC_API void* THCCachingAllocator_getBaseAllocation(void* ptr, size_t* size)
 {
   return caching_allocator.getBaseAllocation(ptr, size);
+}
+
+THC_API cudaError_t THCCachingAllocator_recordStream(void* ptr, THCStream* stream)
+{
+  return caching_allocator.recordStream(ptr, stream);
 }
 
 THC_API std::mutex* THCCachingAllocator_getCudaFreeMutex()

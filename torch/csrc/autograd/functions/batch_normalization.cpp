@@ -2,6 +2,7 @@
 
 #include "torch/csrc/autograd/variable.h"
 #include "torch/csrc/nn/THNN_generic.h"
+#include "torch/csrc/utils/auto_gpu.h"
 
 #ifdef WITH_CUDNN
 #include "torch/csrc/cudnn/BatchNorm.h"
@@ -20,6 +21,8 @@ auto BatchNormForward::apply(const variable_list& inputs) -> variable_list {
   auto& input = inputs[0];
   auto& weight = inputs[1];
   auto& bias = inputs[2];
+  AutoGPU guard(input->data->getDevice());
+  await(inputs);
 
   bool use_cudnn = false;
 #ifdef WITH_CUDNN
@@ -90,6 +93,7 @@ auto BatchNormBackward::apply(const variable_list& grad_outputs) -> variable_lis
   auto& input = this->input.unpack();
   auto& weight = this->weight.unpack();
   auto& bias = this->bias.unpack();
+  AutoGPU guard(input->getDevice());
 
   bool use_cudnn = false;
 #ifdef WITH_CUDNN
@@ -140,9 +144,10 @@ auto BatchNormBackward::apply(const variable_list& grad_outputs) -> variable_lis
         eps);
 #endif
   } else {
+    auto grad_output = grad_outputs[0]->data->contiguous();
     torch::nn::BatchNormalization_backward(
         input.get(),
-        grad_outputs[0]->data.get(),
+        grad_output.get(),
         grad_input.get(),
         grad_weight.get(),
         grad_bias.get(),

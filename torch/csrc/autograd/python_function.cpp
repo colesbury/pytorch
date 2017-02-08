@@ -78,6 +78,12 @@ auto PyFunction::releaseVariables() -> void {
   f->has_freed_buffers = 1;
 }
 
+auto PyFunction::name() -> std::string {
+  AutoGIL gil;
+  auto f = (THPFunction*) obj;
+  return std::string(Py_TYPE(f)->tp_name);
+}
+
 }} // namespace torch::autograd
 
 // Traverse and clear are required for supporting Python's GC cycle handling.
@@ -220,36 +226,32 @@ static void _wrap_outputs(THPFunction *self, t2var_type &t2var,
         output_var = input_var;
         input_var_.creator = THPFunction_asFunction(self);
       } else {
-        // If the leaf Variable has been returned, we have to move it after the
+        // If the Variable has been changed, we have to move it after the
         // current function to ensure the gradient is computed correctly.
         // There are two cases now:
-        // 1. It has been modified in-place. If it didn't require_grad it's ok,
-        // but if it does, then it's a clear error.
-        // 2. It hasn't been modified. This means that it must have been
-        // returned unchanged, and we can simply return a new Variable
-        // referencing the same storage.
+        // 1. If it requires grad, it is an error, and this will be caught
+        // when its _do_backward is called, because it won't be a leaf anymore.
+        // Also we'll change its version.
+        // 2. If it doesn't require grad, we can safely move it in the graph,
+        // because its _do_backward will never be called.
         if (dirty_inputs.count(output) > 0) {
           Py_INCREF(input_var);
           output_var = input_var;
           auto& output_var_ = *output_var->cdata;
           output_var_.creator = THPFunction_asFunction(self);
-          if (!output_var_.requires_grad) {
+          if (!output_var_.requires_grad && self->cdata.requires_grad) {
             // Now, there's another subtlety. We move the input in the graph
-            // and possibly change its requires_grad to True. However, remember
+            // and we change its requires_grad to True. However, remember
             // that we're still holding a reference to is as a previous
             // function. Backward engine will think that it was really a
             // leaf that initialy did require grad and call its _do_backward
             // and that will throw. Because of this, we need to allocate
             // a dummy leaf that doesn't require grad and put it as our
             // previous function.
-            // Even if the function doesn't require grad, creating a dummy leaf
-            // prevents the creation of reference cycles.
-            output_var_.requires_grad = self->cdata.requires_grad;
+            output_var_.requires_grad = true;
             auto dummy_prev_fn = std::make_shared<Variable>(
                 std::unique_ptr<Tensor>(output_var_.data->clone_shallow()), false, false);
             self->cdata.previous_functions[i] = std::make_pair<>(dummy_prev_fn, 0);
-          } else { // output_var_.requires_grad
-            throw std::runtime_error("a leaf Variable that requires grad has been used in an in-place operation.");
           }
         } else {
           // An input has been returned, but it wasn't modified. It's better
@@ -486,12 +488,6 @@ PyObject *THPFunction_do_forward(THPFunction *self, PyObject *inputs)
       if (self->cdata.requires_grad || self->cdata.is_stochastic) {
         _save_variables(self, t2var);
         _mark_non_differentiable(self, t2var);
-      } else {
-        // Remove unnecessary attributes
-        Py_XDECREF(self->to_save);
-        self->to_save = NULL;
-        Py_XDECREF(self->non_differentiable);
-        self->non_differentiable = NULL;
       }
     }
 

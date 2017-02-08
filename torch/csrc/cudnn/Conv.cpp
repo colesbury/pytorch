@@ -1,6 +1,7 @@
 #include "Conv.h"
 
 #include "THC/THC.h"
+#include "THC/THCCachingAllocator.hpp"
 #include "Exceptions.h"
 #include "Types.h"
 

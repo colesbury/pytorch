@@ -19,6 +19,7 @@ Variable::Variable(
     , version_counter(new VariableVersion())
     , output_nr(0)
     , backward_hook()
+    , event()
     , pyobj(nullptr)
 {
   if (!this->data) {
@@ -37,6 +38,7 @@ Variable::Variable(
     , version_counter(new VariableVersion())
     , output_nr(creator->num_outputs++)
     , backward_hook()
+    , event()
     , pyobj(nullptr)
 {
   if (!this->data) {
@@ -46,11 +48,6 @@ Variable::Variable(
   this->requires_grad = creator->requires_grad;
   previous_functions.resize(1);
   previous_functions[0] = std::make_pair<>(creator, output_nr);
-}
-
-bool Variable::is_cuda()
-{
-  return data->isCuda();
 }
 
 auto Variable::backward(std::shared_ptr<Variable> gradOutput) -> void {
