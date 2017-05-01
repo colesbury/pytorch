@@ -32,6 +32,16 @@ struct Block : public BlockSize
       BlockSize(size, ptr), allocated(allocated), event_count(0), streams() {}
 };
 
+struct CudaEvent
+{
+  cudaEvent_t event;
+  int         device;
+  void*       ptr;
+
+  CudaEvent(cudaEvent_t event, int device, void* ptr) :
+      event(event), device(device), ptr(ptr) {}
+};
+
 static bool BlockComparator(const BlockSize& a, const BlockSize& b)
 {
   // sort by size, break ties with pointer
@@ -55,7 +65,7 @@ struct HostAllocator
   std::set<BlockSize, Comparison> available;
 
   // outstanding cuda events
-  std::deque<std::pair<cudaEvent_t, void*>> cuda_events;
+  std::deque<CudaEvent> cuda_events;
 
   HostAllocator() : available(BlockComparator) {}
 
@@ -154,6 +164,12 @@ struct HostAllocator
 
   cudaError_t processEvents()
   {
+    if (cuda_events.empty()) return cudaSuccess;
+
+    int prev_device;
+    cudaError_t err = cudaGetDevice(&prev_device);
+    if (err != cudaSuccess) return err;
+
     // Process outstanding cudaEvents. Events that are completed are removed
     // from the queue, and the 'event_count' for the corresponding allocation
     // is decremented. Stops at the first event which has not been completed.
@@ -161,39 +177,45 @@ struct HostAllocator
     // the processing of some events may be delayed.
     while (!cuda_events.empty()) {
       auto& e = cuda_events.front();
-      cudaEvent_t event = e.first;
 
-      cudaError_t err = cudaEventQuery(event);
+      err = cudaSetDevice(e.device);
+      if (err != cudaSuccess) break;
+
+      err = cudaEventQuery(e.event);
       if (err == cudaErrorNotReady) {
+        err = cudaSuccess;
         break;
       } else if (err != cudaSuccess) {
-        return err;
+        break;
       }
-      err = cudaEventDestroy(event);
-      if (err != cudaSuccess) {
-        return err;
-      }
+      err = cudaEventDestroy(e.event);
+      if (err != cudaSuccess) break;
 
-      Block& block = blocks.at(e.second);
+      Block& block = blocks.at(e.ptr);
       block.event_count--;
       if (block.event_count == 0 && !block.allocated) {
         available.insert(block);
       }
       cuda_events.pop_front();
     }
-    return cudaSuccess;
+
+    cudaSetDevice(prev_device);
+    return err;
   }
 
   void emptyCache()
   {
     std::lock_guard<std::mutex> lock(mutex);
 
+    int prev_device = 0;
+    THCudaCheckWarn(cudaGetDevice(&prev_device));
+
     // remove events for freed blocks
     for (auto it = cuda_events.begin(); it != cuda_events.end(); ++it) {
-      cudaEvent_t event = it->first;
-      Block& block = blocks.at(it->second);
+      Block& block = blocks.at(it->ptr);
       if (!block.allocated) {
-        THCudaCheckWarn(cudaEventDestroy(event));
+        THCudaCheckWarn(cudaSetDevice(it->device));
+        THCudaCheckWarn(cudaEventDestroy(it->event));
         block.event_count--;
       }
     }
@@ -214,6 +236,8 @@ struct HostAllocator
         ++it;
       }
     }
+
+    THCudaCheckWarn(cudaSetDevice(prev_device));
   }
 
   cudaError_t insertEvents(Block& block)
@@ -239,7 +263,7 @@ struct HostAllocator
       if (err != cudaSuccess) break;
 
       block.event_count++;
-      cuda_events.emplace_back(event, block.ptr);
+      cuda_events.emplace_back(event, stream->device, block.ptr);
     }
 
     cudaSetDevice(prev_device);

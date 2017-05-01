@@ -45,7 +45,8 @@ def _worker_loop(dataset, index_queue, data_queue, collate_fn):
             data_queue.put((idx, samples))
 
 
-def _pin_memory_loop(in_queue, out_queue, done_event):
+def _pin_memory_loop(in_queue, out_queue, done_event, device):
+    torch.cuda.set_device(device)
     while True:
         try:
             r = in_queue.get()
@@ -163,10 +164,11 @@ class DataLoaderIter(object):
 
             if self.pin_memory:
                 in_data = self.data_queue
+                device = torch.cuda.current_device()
                 self.data_queue = queue.Queue()
                 self.pin_thread = threading.Thread(
                     target=_pin_memory_loop,
-                    args=(in_data, self.data_queue, self.done_event))
+                    args=(in_data, self.data_queue, self.done_event, device))
                 self.pin_thread.daemon = True
                 self.pin_thread.start()
 

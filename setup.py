@@ -19,7 +19,7 @@ from tools.setup_helpers.split_types import split_types
 DEBUG = check_env_flag('DEBUG')
 WITH_DISTRIBUTED = check_env_flag('WITH_DISTRIBUTED')
 WITH_DISTRIBUTED_MW = WITH_DISTRIBUTED and check_env_flag('WITH_DISTRIBUTED_MW')
-WITH_NCCL = WITH_CUDA and platform.system() != 'Darwin'
+WITH_NCCL = False # WITH_CUDA and platform.system() != 'Darwin'
 SYSTEM_NCCL = False
 
 ################################################################################
