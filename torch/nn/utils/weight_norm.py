@@ -1,21 +1,58 @@
 """
 Weight Normalization from https://arxiv.org/abs/1602.07868
 """
-import functools
 import torch
 
 
-def _decorate(forward, module, norm, name, name_g, name_v):
-    @functools.wraps(forward)
-    def decorated_forward(*args, **kwargs):
-        g = getattr(module, name_g)
-        v = getattr(module, name_v)
-        w = v * (g / norm(v))
-        setattr(module, name, w)
-        return forward(*args, **kwargs)
-    decorated_forward._norm = norm
-    decorated_forward._previous_forward = forward
-    return decorated_forward
+def norm(p, dim):
+    """Computes the norm over all dimensions except dim"""
+    if dim is None:
+        return p.norm()
+    if dim != 0:
+        p = p.transpose(0, dim)
+    output_size = (p.size(0),) + (1,) * (p.dim() - 1)
+    p = p.contiguous().view(p.size(0), -1).norm(dim=1).view(*output_size)
+    if dim != 0:
+        p = p.transpose(0, dim)
+    return p
+
+
+class WeightNorm(object):
+    def __init__(self, module, name, dim):
+        self.module = module
+        self.name = name
+        self.dim = dim
+        self.name_g = name + '_g'
+        self.name_v = name + '_v'
+
+        w = getattr(module, name)
+
+        # remove w from parameter list
+        del module._parameters[name]
+
+        # add g and v as new parameters and express w as g/||v|| * v
+        module.register_parameter(self.name_g, torch.nn.Parameter(norm(w, dim).data))
+        module.register_parameter(self.name_v, torch.nn.Parameter(w.data))
+        setattr(module, name, self.compute_weight())
+
+        self._forward = self.module.forward
+
+    def compute_weight(self):
+        g = getattr(self.module, self.name_g)
+        v = getattr(self.module, self.name_v)
+        return v * (g / norm(v, self.dim))
+
+    def wrapped_forward(self, *args, **kwargs):
+        setattr(self.module, self.name, self.compute_weight())
+        return self._forward(*args, **kwargs)
+
+    def remove(self):
+        w = self.compute_weight()
+        del self.module._parameters[self.name_g]
+        del self.module._parameters[self.name_v]
+        delattr(self.module, self.name)
+        self.module.register_parameter(self.name, torch.nn.Parameter(w.data))
+        self.module.forward = self._forward
 
 
 def weight_norm(module, name='weight', dim=0):
@@ -42,67 +79,25 @@ def weight_norm(module, name='weight', dim=0):
         torch.Size([1])
         >>> m.weight_v.size()
         torch.Size([40, 20])
-
     """
-
-    param = getattr(module, name)
-
-    # construct g,v such that w = g/||v|| * v
-    def norm(p):
-        """Computes the norm over all dimensions except dim"""
-        if dim is None:
-            return p.norm()
-        if dim != 0:
-            p = p.transpose(0, dim)
-        output_size = (p.size(0),) + (1,) * (p.dim() - 1)
-        p = p.contiguous().view(p.size(0), -1).norm(dim=1).view(*output_size)
-        if dim != 0:
-            p = p.transpose(0, dim)
-        return p
-
-    g = torch.nn.Parameter(norm(param).data)
-    v = torch.nn.Parameter(param.data)
-    name_g = name + '_g'
-    name_v = name + '_v'
-
-    # remove w from parameter list
-    del module._parameters[name]
-
-    # add g and v as new parameters and express w as g/||v|| * v
-    module.register_parameter(name_g, g)
-    module.register_parameter(name_v, v)
-    setattr(module, name, v * (g / norm(v)))
-
-    # construct w every time before forward is called
-    module.forward = _decorate(module.forward, module, norm, name, name_g, name_v)
+    module.forward = WeightNorm(module, name, dim).wrapped_forward
     return module
 
 
-def remove_weight_norm(module, name='weight'):
+def remove_weight_norm(module):
     """Removes the weight normalization reparameterization from a module.
 
     Args:
         module (nn.Module): containing module
-        name (str, optional): name of the weight-normalized parameter
 
     Example:
         >>> m = weight_norm(nn.Linear(20, 40))
-        >>> m.weight_g
         >>> remove_weight_norm(m)
     """
 
-    name_g = name + '_g'
-    name_v = name + '_v'
-    g = getattr(module, name_g)
-    v = getattr(module, name_v)
+    wn = module.forward.__self__
+    if not isinstance(wn, WeightNorm):
+        raise TypeError('expected WeightNorm (got {})'.format(type(wn).__name__))
 
-    norm = module.forward._norm
-    w = v * (g / norm(v))
-
-    del module._parameters[name_g]
-    del module._parameters[name_v]
-    delattr(module, name)
-    module.register_parameter(name, torch.nn.Parameter(w.data))
-
-    module.forward = module.forward._previous_forward
+    wn.remove()
     return module
