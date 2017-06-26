@@ -626,6 +626,16 @@ Utilities
 
 .. autofunction:: torch.nn.utils.clip_grad_norm
 
+:hidden:`weight_norm`
+~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: torch.nn.utils.weight_norm
+
+:hidden:`remove_weight_norm`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: torch.nn.utils.remove_weight_norm
+
 
 .. currentmodule:: torch.nn.utils.rnn
 
