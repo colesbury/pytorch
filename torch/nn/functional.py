@@ -533,13 +533,17 @@ def sigmoid(input):
 def linear(input, weight, bias=None):
     size = input.size()
     if input.dim() == 3:
-        input = input.view(size[0] * size[1], size[2])
-    output = input.mm(weight.t())
+        input = input.contiguous().view(size[0] * size[1], size[2])
+    if bias is not None:
+        bias = bias.expand(input.size(0), weight.size(0))
+        output = torch.addmm(bias, input, weight.t())
+    else:
+        output = torch.mm(input, weight.t())
     if len(size) == 3:
         output = output.view(size[0], size[1], -1)
     # output = input.matmul(weight.t())
-    if bias is not None:
-        output += bias.expand_as(output)
+    # if bias is not None:
+    #     output += bias.expand_as(output)
     return output
 
 

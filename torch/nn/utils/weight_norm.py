@@ -1,7 +1,8 @@
 """
 Weight Normalization from https://arxiv.org/abs/1602.07868
 """
-import torch
+import torch.utils.hooks as hooks
+from torch.nn.parameter import Parameter
 
 
 def norm(p, dim):
@@ -18,12 +19,18 @@ def norm(p, dim):
 
 
 class WeightNorm(object):
-    def __init__(self, module, name, dim):
-        self.module = module
+    def __init__(self, name, dim):
         self.name = name
         self.dim = dim
-        self.name_g = name + '_g'
-        self.name_v = name + '_v'
+
+    def compute_weight(self, module):
+        g = getattr(module, self.name + '_g')
+        v = getattr(module, self.name + '_v')
+        return v * (g / norm(v, self.dim))
+
+    @staticmethod
+    def apply(module, name, dim):
+        fn = WeightNorm(name, dim)
 
         w = getattr(module, name)
 
@@ -31,28 +38,17 @@ class WeightNorm(object):
         del module._parameters[name]
 
         # add g and v as new parameters and express w as g/||v|| * v
-        module.register_parameter(self.name_g, torch.nn.Parameter(norm(w, dim).data))
-        module.register_parameter(self.name_v, torch.nn.Parameter(w.data))
-        setattr(module, name, self.compute_weight())
+        module.register_parameter(name + '_g', Parameter(norm(w, dim).data))
+        module.register_parameter(name + '_v', Parameter(w.data))
+        setattr(module, name, fn.compute_weight(module))
 
-        self._forward = self.module.forward
+        handle = hooks.RemovableHandle(module._forward_pre_hooks)
+        module._forward_pre_hooks[handle.id] = fn
 
-    def compute_weight(self):
-        g = getattr(self.module, self.name_g)
-        v = getattr(self.module, self.name_v)
-        return v * (g / norm(v, self.dim))
+        return fn
 
-    def wrapped_forward(self, *args, **kwargs):
-        setattr(self.module, self.name, self.compute_weight())
-        return self._forward(*args, **kwargs)
-
-    def remove(self):
-        w = self.compute_weight()
-        del self.module._parameters[self.name_g]
-        del self.module._parameters[self.name_v]
-        delattr(self.module, self.name)
-        self.module.register_parameter(self.name, torch.nn.Parameter(w.data))
-        self.module.forward = self._forward
+    def __call__(self, module, inputs):
+        setattr(module, self.name, self.compute_weight(module))
 
 
 def weight_norm(module, name='weight', dim=0):
@@ -80,7 +76,7 @@ def weight_norm(module, name='weight', dim=0):
         >>> m.weight_v.size()
         torch.Size([40, 20])
     """
-    module.forward = WeightNorm(module, name, dim).wrapped_forward
+    WeightNorm.apply(module, name, dim)
     return module
 
 

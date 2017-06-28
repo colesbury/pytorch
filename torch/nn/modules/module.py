@@ -54,6 +54,7 @@ class Module(object):
         self._buffers = OrderedDict()
         self._backward_hooks = OrderedDict()
         self._forward_hooks = OrderedDict()
+        self._forward_pre_hooks = OrderedDict()
         self._modules = OrderedDict()
         self.training = True
 
@@ -203,6 +204,8 @@ class Module(object):
         return handle
 
     def __call__(self, *input, **kwargs):
+        for hook in self._forward_pre_hooks.values():
+            hook(self, input)
         result = self.forward(*input, **kwargs)
         for hook in self._forward_hooks.values():
             hook_result = hook(self, input, result)
@@ -449,6 +452,8 @@ class Module(object):
             memo.add(self)
             yield prefix, self
             for name, module in self._modules.items():
+                if module is None:
+                    continue
                 submodule_prefix = prefix + ('.' if prefix else '') + name
                 for m in module.named_modules(memo, submodule_prefix):
                     yield m
