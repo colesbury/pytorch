@@ -1,0 +1,280 @@
+- name: __and__
+- name: __iand__
+- name: __ilshift__
+- name: __ior__
+- name: __irshift__
+- name: __ixor__
+- name: __lshift__
+- name: __or__
+- name: __rshift__
+- name: __xor__
+
+- name: abs(Tensor self)
+  self: grad * self.sign()
+
+- name: acos(Tensor self)
+  self: grad * -((1 - self * self).sqrt().reciprocal())
+
+- name: add(Tensor self, Scalar value, Tensor other)
+  self: grad
+  other: grad * value
+
+- name: add(Tensor self, Scalar value)
+  self: grad
+
+- name: add(Tensor self, Tensor other)
+  self: grad
+  other: grad
+
+- name: addbmm(Scalar beta=1, Tensor self, Scalar alpha=1, Tensor mat1, Tensor mat2)
+  self: grad * alpha
+  mat1: grad.bmm(mat2.transpose(1, 2)) * beta
+  mat2: mat1.transpose(1, 2).bmm(grad) * beta
+
+- name: addcdiv(Tensor self, Scalar value=1, Tensor tensor1, Tensor tensor2)
+  self: grad * value
+  tensor1: grad / tensor2 * value
+  tensor2: -grad * tensor1 / (tensor2 * tensor2)
+
+- name: addcmul(Tensor self, Scalar value=1, Tensor tensor1, Tensor tensor2)
+  self: grad * value
+  tensor1: grad * tensor2 * value
+  tensor2: grad * tensor1 * value
+
+- name: addmm(Scalar beta=1, Tensor self, Scalar alpha=1, Tensor mat1, Tensor mat2)
+  self: grad * alpha
+  mat1: grad.mm(mat2.t()) * beta
+  mat2: mat1.t().mm(grad) * beta
+
+- name: addmv(Scalar beta=1, Tensor self, Scalar alpha=1, Tensor mat, Tensor vec)
+  self: grad * alpha
+  mat: grad.ger(vec) * beta
+  vec: mat.t().mv(grad) * beta
+
+- name: addr
+- name: all
+- name: any
+- name: asin
+- name: assign
+- name: atan
+- name: atan2
+- name: baddbmm
+- name: bmm
+- name: btrifact
+- name: btrisolve
+- name: cat
+- name: cauchy
+- name: ceil
+- name: clamp
+
+- name: clone(Tensor self)
+  self: grad
+
+- name: contiguous(Tensor self)
+  self: grad
+
+- name: cos(Tensor self)
+  self: grad * -self.sin()
+
+- name: cosh
+- name: cross
+- name: cumprod
+- name: cumsum
+
+- name: data_ptr
+  fallthrough: true
+
+- name: diag
+- name: dist
+
+- name: div(Tensor self, Scalar value)
+  self: grad.div(value)
+
+- name: div(Tensor self, Tensor other)
+  self: grad.div(other)
+  other: grad.neg().mul(self).div(other.mul(other))
+
+- name: dot
+- name: eig
+- name: eq
+- name: equal
+- name: exp
+
+- name: expand(Tensor self, IntList size)
+  self: reduce_to(grad, self.sizes())
+
+- name: eye
+- name: fill
+- name: floor
+- name: fmod
+- name: frac
+- name: gather
+- name: ge
+- name: gels
+- name: geometric
+- name: geqrf
+
+- name: ger(Tensor self, Tensor vec2)
+  self: grad.mv(vec2)
+  vec2: grad.t().mv(self)
+
+- name: gesv
+
+- name: get_device
+  fallthrough: true
+
+- name: gt
+- name: histc
+- name: index_add
+- name: index_copy
+- name: index_fill
+- name: index_select
+- name: inverse
+
+- name: is_contiguous(Tensor self)
+  fallthrough: true
+
+- name: is_same_size
+  fallthrough: true
+
+- name: is_set_to
+  fallthrough: true
+
+- name: kthvalue
+- name: le
+- name: lerp
+- name: lgamma
+- name: linspace
+
+- name: log(Tensor self)
+  self: grad.div(self)
+
+- name: log1p
+- name: log_normal
+- name: logspace
+- name: lt
+- name: masked_fill
+- name: masked_scatter
+- name: masked_select
+- name: max
+- name: mean
+- name: median
+- name: min
+- name: mm
+- name: mode
+
+- name: mul(Tensor self, Scalar value)
+  self: grad * value
+
+- name: mul(Tensor self, Tensor other)
+  self: grad * other
+  other: grad * self
+
+- name: multinomial
+
+- name: mv(Tensor self, Tensor vec)
+  self: grad.ger(vec)
+  vec: self.t().mv(grad)
+
+- name: narrow
+- name: ne
+
+- name: neg
+  self: grad.neg()
+
+- name: nonzero
+
+- name: norm(Tensor self, Scalar p=2)
+  self: norm_backward(grad, self, p)
+
+- name: norm(Tensor self, Scalar p, int64_t dim, bool keepdim=False)
+  self: norm_backward(grad, self, p, dim, keepdim)
+
+- name: numel
+- name: ones
+- name: orgqr
+- name: ormqr
+- name: potrf
+- name: potri
+- name: potrs
+- name: pow
+- name: prod
+- name: pstrf
+- name: qr
+- name: rand
+- name: randn
+- name: randperm
+- name: range
+
+- name: reciprocal(Tensor self)
+  self: grad / -(self * self)
+
+- name: remainder
+- name: renorm
+- name: resize
+- name: resize_as
+- name: round
+- name: rsqrt
+- name: scatter
+- name: scatter_add
+- name: select
+- name: set
+- name: sigmoid
+- name: sign
+
+- name: sin(Tensor self)
+  self: grad * self.cos()
+
+- name: sinh
+- name: size
+- name: sort
+- name: sqrt
+- name: squeeze
+- name: std
+
+- name: storage_offset
+  fallthrough: true
+
+- name: stride
+  fallthrough: true
+
+- name: sub(Tensor self, Scalar value)
+  self: grad
+
+- name: sub(Tensor self, Tensor other)
+  self: grad
+
+- name: sub(Tensor self, Scalar value, Tensor other)
+  self: grad
+  other: -grad * value
+
+- name: sum(Tensor self)
+  self: grad.expand(self.sizes())
+
+- name: sum(Tensor self, int64_t dim, bool keepdim=False)
+  self: grad
+
+- name: svd
+- name: symeig
+
+- name: t(Tensor self)
+  self: grad.t()
+
+- name: tan
+- name: tanh
+- name: tensor
+  fallthrough: true
+- name: topk
+- name: trace
+- name: transpose
+- name: tril
+- name: triu
+- name: trtrs
+- name: trunc
+- name: unfold
+- name: uniform
+- name: unsqueeze
+- name: var
+- name: view
+- name: zero
+- name: zeros

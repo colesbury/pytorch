@@ -255,9 +255,9 @@ class Variable(_C._VariableBase):
         self.register_hook(retain_grad_hook)
         self.retains_grad = True
 
-    def contiguous(self):
-        self.data = self.data.contiguous()
-        return self
+    # def contiguous(self):
+    #     self.data = self.data.contiguous()
+    #     return self
 
     def clone(self):
         return Clone.apply(self)
@@ -316,8 +316,8 @@ class Variable(_C._VariableBase):
             assert not torch.is_tensor(other)
             return AddConstant.apply(self, other, inplace)
 
-    def add(self, other):
-        return self._add(other, False)
+    # def add(self, other):
+    #     return self._add(other, False)
 
     def add_(self, other):
         return self._add(other, True)
@@ -329,30 +329,30 @@ class Variable(_C._VariableBase):
             assert not torch.is_tensor(other)
             return SubConstant.apply(self, other, inplace)
 
-    def sub(self, other):
-        return self._sub(other, False)
+    # def sub(self, other):
+    #     return self._sub(other, False)
 
     def sub_(self, other):
         return self._sub(other, True)
 
-    def mul(self, other):
-        if isinstance(other, Variable):
-            return Mul.apply(self, other)
-        else:
-            assert not torch.is_tensor(other)
-            return MulConstant.apply(self, other)
+    # def mul(self, other):
+    #     if isinstance(other, Variable):
+    #         return Mul.apply(self, other)
+    #     else:
+    #         assert not torch.is_tensor(other)
+    #         return MulConstant.apply(self, other)
 
     def mul_(self, other):
         if not isinstance(other, Variable) and not torch.is_tensor(other):
             return MulConstant.apply(self, other, True)
         raise RuntimeError("mul_ only supports scalar multiplication")
 
-    def div(self, other):
-        if isinstance(other, Variable):
-            return Div.apply(self, other)
-        else:
-            assert not torch.is_tensor(other)
-            return DivConstant.apply(self, other)
+    # def div(self, other):
+    #     if isinstance(other, Variable):
+    #         return Div.apply(self, other)
+    #     else:
+    #         assert not torch.is_tensor(other)
+    #         return DivConstant.apply(self, other)
 
     def div_(self, other):
         if not isinstance(other, Variable) and not torch.is_tensor(other):
@@ -372,8 +372,8 @@ class Variable(_C._VariableBase):
     def exp_(self):
         return Exp.apply(self, True)
 
-    def log(self):
-        return Log.apply(self)
+    # def log(self):
+    #     return Log.apply(self)
 
     def log1p(self):
         return Log1p.apply(self)
@@ -473,8 +473,8 @@ class Variable(_C._VariableBase):
     def rsqrt(self):
         return Rsqrt.apply(self)
 
-    def sum(self, dim=None, keepdim=None):
-        return Sum.apply(self, dim, keepdim)
+    # def sum(self, dim=None, keepdim=None):
+    #     return Sum.apply(self, dim, keepdim)
 
     def prod(self, dim=None, keepdim=None):
         return Prod.apply(self, dim, keepdim)
@@ -598,20 +598,20 @@ class Variable(_C._VariableBase):
     def resize_as(self, variable):
         return Resize.apply(self, variable.size())
 
-    def addmm(self, *args):
-        return self._blas(Addmm, args, False)
+    # def addmm(self, *args):
+    #     return self._blas(Addmm, args, False)
 
     def addmm_(self, *args):
         return self._blas(Addmm, args, True)
 
-    def addbmm(self, *args):
-        return self._blas(Addbmm, args, False)
+    # def addbmm(self, *args):
+    #     return self._blas(Addbmm, args, False)
 
     def addbmm_(self, *args):
         return self._blas(Addbmm, args, True)
 
-    def baddbmm(self, *args):
-        return self._blas(Baddbmm, args, False)
+    # def baddbmm(self, *args):
+    #     return self._blas(Baddbmm, args, False)
 
     def baddbmm_(self, *args):
         return self._blas(Baddbmm, args, True)
@@ -813,24 +813,26 @@ class Variable(_C._VariableBase):
         assert not torch.is_tensor(other), "can't compare Variable and tensor"
         return Le.apply(self, other)
 
-    def __add__(self, other):
-        return self.add(other)
+    # def __add__(self, other):
+    #     return self.add(other)
+    __add__ = _C._VariableBase.add
     __radd__ = __add__
 
     def __iadd__(self, other):
         return self.add_(other)
 
-    def __sub__(self, other):
-        return self.sub(other)
+    __sub__ = _C._VariableBase.sub
+    __rsub__ = __sub__
 
     def __isub__(self, other):
         return self.sub_(other)
 
-    def __rsub__(self, other):
-        return SubConstant.apply(other, self)
+    # def __rsub__(self, other):
+    #     return SubConstant.apply(other, self)
 
-    def __mul__(self, other):
-        return self.mul(other)
+    # def __mul__(self, other):
+    #     return self.mul(other)
+    __mul__ = _C._VariableBase.mul
     __rmul__ = __mul__
 
     def __imul__(self, other):
@@ -841,13 +843,12 @@ class Variable(_C._VariableBase):
             return NotImplemented
         return self.matmul(other)
 
-    def __div__(self, other):
-        return self.div(other)
+    # def __div__(self, other):
+    #     return self.div(other)
+    __div__ = _C._VariableBase.div
     __truediv__ = __div__
-
-    def __rdiv__(self, other):
-        return DivConstant.apply(other, self)
-    __rtruediv__ = __rdiv__
+    __rdiv__ = __div__
+    __rtruediv__ = __div__
 
     def __idiv__(self, other):
         return self.div_(other)

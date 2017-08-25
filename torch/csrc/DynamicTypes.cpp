@@ -64,13 +64,13 @@ at::Tensor createTensor(PyObject *data)
   auto tensor = ((THPVoidTensor *)data)->cdata;
   return tensor_type->unsafeTensorFromTH(tensor, true); // Calls retain on underlying TH Tensor
 }
-PyObject* createPyObject(at::Tensor& tensor)
+PyObject* createPyObject(const at::Tensor& tensor)
 {
   auto type = getPyTypeObject(tensor);
   PyObject *obj = type->tp_alloc(type, 0);
   if (obj) {
     // Retain underlying TH Tensor
-    ((THPVoidTensor*)obj)->cdata = (THVoidTensor *)tensor.unsafeGetTH(true);
+    ((THPVoidTensor*)obj)->cdata = (THVoidTensor *)const_cast<at::Tensor&>(tensor).unsafeGetTH(true);
   }
   return obj;
 }

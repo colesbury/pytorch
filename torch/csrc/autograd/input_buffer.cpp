@@ -3,21 +3,21 @@
 #include "torch/csrc/autograd/functions/basic_ops.h"
 #include "torch/csrc/utils/auto_gpu.h"
 
+using at::Tensor;
+
 namespace torch { namespace autograd {
 
 InputBuffer::InputBuffer(size_t size)
   : buffer(size)
   {}
 
-void InputBuffer::add(size_t pos, std::shared_ptr<Variable>&& var) {
-  if (!var) {
+void InputBuffer::add(size_t pos, const Variable& var) {
+  if (!var.defined()) {
     return;
   }
   auto& item = buffer[pos];
-  auto& saved_var_ptr = item.first;
-  if (!saved_var_ptr) {
-    auto version = **var->version_counter;
-    buffer[pos] = std::make_pair<>(std::move(var), version);
+  if (!item.first.defined()) {
+    buffer[pos] = std::make_pair<>(std::move(var), var.current_version());
   } else {
     variable_list result = Add().apply({item.first, var});
     buffer[pos] = std::make_pair<>(std::move(result[0]), 0);
@@ -26,22 +26,21 @@ void InputBuffer::add(size_t pos, std::shared_ptr<Variable>&& var) {
 
 auto InputBuffer::device() const -> int {
   for (auto& pair : buffer) {
-    if (pair.first && pair.first->data.type().isCuda()) {
-      return pair.first->data.get_device();
+    if (pair.first.defined() && pair.first.type().isCuda()) {
+      return pair.first.get_device();
     }
   }
   return -1;
 }
 
-auto InputBuffer::variables(InputBuffer&& g) -> std::vector<std::shared_ptr<Variable>> {
+auto InputBuffer::variables(InputBuffer&& g) -> std::vector<Variable> {
   InputBuffer _buffer = std::move(g);
   auto& buffer = _buffer.buffer;
   int size = buffer.size();
-  std::vector<std::shared_ptr<Variable>> result;
+  std::vector<Variable> result;
   result.reserve(size);
   for (int i = 0; i != size; ++i) {
-    auto var_ptr = buffer[i].first;
-    result.emplace_back(var_ptr ? std::move(buffer[i].first) : nullptr);
+    result.emplace_back(buffer[i].first);
   }
   return result;
 }
