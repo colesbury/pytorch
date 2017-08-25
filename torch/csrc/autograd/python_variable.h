@@ -2,14 +2,16 @@
 
 #include <Python.h>
 #include <memory>
+#include <ATen/ATen.h>
 
 #include "torch/csrc/autograd/variable.h"
+#include "torch/csrc/autograd/VariableTensor.h"
 
 // Python object that backs torch.autograd.Variable
 struct THPVariable {
     PyObject_HEAD
     // Payload
-    std::shared_ptr<torch::autograd::Variable> cdata;
+    torch::autograd::VariableTensor* cdata;
     // Tensor this wraps (corresponds to Python attr 'data').
     // It assumed that a THPVariable is *uniquely* identified by the
     // tensor it wraps.
@@ -26,7 +28,7 @@ bool THPVariable_initModule(PyObject *module);
 PyObject * THPVariable_NewVolatile(PyObject *data);
 PyObject * THPVariable_NewLeaf(PyObject *data);
 PyObject * THPVariable_NewWithFunction(PyObject *data, const std::shared_ptr<torch::autograd::Function>& var);
-PyObject * THPVariable_Wrap(const std::shared_ptr<torch::autograd::Variable>& var);
+PyObject * THPVariable_Wrap(const at::Tensor& var);
 PyObject * THPVariable_get_data(THPVariable *self);
 
 inline bool THPVariable_Check(PyObject *obj)

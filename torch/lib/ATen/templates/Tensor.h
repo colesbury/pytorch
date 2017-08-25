@@ -72,7 +72,7 @@ struct Tensor {
   void reset(TensorImpl * rhs, bool retain) {
     Tensor(rhs, retain).swap(*this );
   }
-  TensorImpl * get() {
+  TensorImpl * get() const {
     return pImpl;
   }
   TensorImpl * detach() {

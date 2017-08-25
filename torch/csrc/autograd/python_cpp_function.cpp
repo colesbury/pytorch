@@ -14,6 +14,7 @@
 #include "torch/csrc/Exceptions.h"
 
 using namespace torch::autograd;
+using at::Tensor;
 
 namespace torch { namespace autograd {
 
@@ -35,7 +36,7 @@ PyObject* THPCppFunction_call(PyObject* self, PyObject* args, PyObject *kwargs)
     if (!THPVariable_Check(arg)) {
       return PyErr_Format(PyExc_TypeError, "argument %d is not a Variable", i);
     }
-    vars[i] = ((THPVariable*)arg)->cdata;
+    vars[i] = Tensor(((THPVariable*)arg)->cdata, true);
   }
 
   variable_list output;

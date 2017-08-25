@@ -1,3 +1,4 @@
+import copy
 import re
 from code_template import CodeTemplate
 
@@ -310,23 +311,37 @@ def create_generic(top_env, declarations):
         top_env['type_method_definitions'].append(
             TYPE_METHOD_DEFINITION.substitute(env))
 
+        output_option = {
+            'name': option['api_name'],
+            'arguments': formals,
+            'returns': option['returns'],
+            'inplace': option['inplace'],
+        }
+
         if is_method:
             top_env['tensor_method_declarations'].append(
                 TENSOR_METHOD_DECLARATION.substitute(env))
             top_env['tensor_method_definitions'].append(
                 TENSOR_METHOD_DEFINITION.substitute(env))
-            output_options.append({
-                'name': option['name'],
+            tensor_option = copy.copy(output_option)
+            tensor_option.update({
                 'arguments': [f for f in formals if f['name'] != 'self'],
                 'method_of': 'Tensor',
-                'returns': option['returns'],
-                'inplace': option['inplace'],
             })
+            output_options.append(tensor_option)
+
+            if not is_function:
+                type_option = copy.copy(output_option)
+                type_option.update({
+                    'name': option['method_prefix'] + option['api_name'],
+                    'method_of': 'Type',
+                })
+                output_options.append(type_option)
 
         if is_function:
             first_tensor = find_first_tensor(formals)
             output_option = {
-                'name': option['name'],
+                'name': option['api_name'],
                 'arguments': formals,
                 'returns': option['returns'],
                 'inplace': option['inplace'],
@@ -337,23 +352,23 @@ def create_generic(top_env, declarations):
                     FUNCTION_DECLARATION.substitute(env))
                 top_env['function_definitions'].append(
                     FUNCTION_DEFINITION.substitute(env))
-            else:
-                output_option['method_of'] = 'Type'
-            output_options.append(output_option)
+                namespace_option = copy.copy(output_option)
+                namespace_option['method_of'] = 'namespace'
+                output_options.append(namespace_option)
+
+            type_option = copy.copy(output_option)
+            type_option['method_of'] = 'Type'
+            output_options.append(type_option)
 
     output_declarations = []
     for declaration in declarations:
-        output_options = []
+        declarations = []
         for option in declaration['options']:
             try:
-                process_option(option, output_options)
+                process_option(option, declarations)
             except NYIError:
                 option['skip'] = True
-        if len(output_options) > 0:
-            output_declarations.append({
-                'name': output_options[0]['name'],
-                'options': output_options,
-            })
+        output_declarations.extend(declarations)
     return output_declarations
 
 

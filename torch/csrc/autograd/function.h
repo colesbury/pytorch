@@ -20,7 +20,7 @@ struct Function;
 struct Variable;
 
 using tensor_list = std::vector<at::Tensor>;
-using variable_list = std::vector<std::shared_ptr<Variable>>;
+using variable_list = std::vector<at::Tensor>;
 using function_list = std::vector<std::pair<std::shared_ptr<Function>, int>>;
 
 // State used to create "backward" functions

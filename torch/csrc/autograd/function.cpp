@@ -13,8 +13,11 @@ auto Function::flags(const variable_list& inputs) -> FunctionFlags {
   f.is_volatile = false;
   f.next_functions.resize(num_inputs);
   for (int i = 0; i != num_inputs; ++i) {
-    auto& var = inputs[i];
-    if (var) {
+    if (inputs[i].defined()) {
+      auto var = dynamic_cast<VariableTensor*>(inputs[i].get());
+      if (!var) {
+        throw std::runtime_error("expeted VariableTensor");
+      }
       f.is_executable |= var->requires_grad;
       f.is_volatile |= var->is_volatile;
       if (var->grad_fn) {

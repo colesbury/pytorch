@@ -8,6 +8,7 @@
 #include <unordered_set>
 
 using namespace torch::autograd;
+using at::Tensor;
 
 struct THPEngine {
     PyObject_HEAD
@@ -152,7 +153,7 @@ PyObject *THPEngine_run_backward(THPEngine *self, PyObject *args, PyObject *kwar
 
     PyObject *grad = PyTuple_GET_ITEM(grad_variables, i);
     if (THPVariable_Check(grad)) {
-      grads[i] = ((THPVariable*)grad)->cdata;
+      grads[i] = Tensor(((THPVariable*)grad)->cdata, true);
     } else {
       THPUtils_assert(grad == Py_None,
           "element %d of gradients tuple is not a Variable or None", i);

@@ -2,6 +2,12 @@
 
 #include "THP.h"
 
+#include <ATen/ATen.h>
+#include "torch/csrc/autograd/VariableTensor.h"
+
+using namespace at;
+using namespace torch::autograd;
+
 
 PyObject * THPAutograd_initExtension(PyObject *_unused)
 {

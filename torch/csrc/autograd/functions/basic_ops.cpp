@@ -14,7 +14,11 @@ auto DelayedError::apply(const variable_list& inputs) -> variable_list {
   tensor_list outputs;
   outputs.reserve(inputs.size());
   for (auto& var : inputs) {
-    outputs.emplace_back(var ? var->data : at::Tensor());
+    if (var.defined()) {
+      outputs.emplace_back(data(var));
+    } else {
+      outputs.emplace_back();
+    }
   }
   return wrap_outputs(inputs, std::move(outputs), [&](FunctionFlags f) {
     return std::make_shared<Error>(msg, std::move(f));
@@ -23,8 +27,8 @@ auto DelayedError::apply(const variable_list& inputs) -> variable_list {
 
 auto Add::apply(const variable_list& inputs) -> variable_list {
   check_input_variables("Add", inputs, 2);
-  auto& input1 = inputs[0]->data;
-  auto& input2 = inputs[1]->data;
+  auto& input1 = data(inputs[0]);
+  auto& input2 = data(inputs[1]);
   AutoGPU guard(input1);
 
   at::Tensor output;

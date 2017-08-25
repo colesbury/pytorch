@@ -48,9 +48,9 @@ struct ConvBackward : public Function, public ConvParams {
   ConvBackward(
       FunctionFlags flags,
       ConvParams params,
-      const std::shared_ptr<Variable>& input,
-      const std::shared_ptr<Variable>& weight,
-      const std::shared_ptr<Variable>& bias,
+      at::Tensor input,
+      at::Tensor weight,
+      at::Tensor bias,
       tensor_list columns,
       tensor_list ones,
       std::unique_ptr<torch::cudnn::Convolution> convolution)
@@ -58,9 +58,11 @@ struct ConvBackward : public Function, public ConvParams {
     , ConvParams(std::move(params))
     , convolution(std::move(convolution)) {
       if (is_executable) {
-        this->input_ = input->save(this);
-        this->weight_ = weight->save(this);
-        this->bias_ = Variable::save_opt(bias.get(), this);
+        this->input_ = SavedVariable(input, this);
+        this->weight_ = SavedVariable(weight, this);
+        if (bias.defined()) {
+          this->bias_ = SavedVariable(bias, this);
+        }
         this->columns = std::move(columns);
         this->ones = std::move(ones);
       }
@@ -82,17 +84,19 @@ struct ConvBackwardBackward : public Function, public ConvParams {
   ConvBackwardBackward(
       FunctionFlags flags,
       ConvParams params,
-      const std::shared_ptr<Variable>& input,
-      const std::shared_ptr<Variable>& weight,
-      const std::shared_ptr<Variable>& bias,
-      const std::shared_ptr<Variable>& grad_output)
+      at::Tensor input,
+      at::Tensor weight,
+      at::Tensor bias,
+      at::Tensor grad_output)
     : Function(std::move(flags))
     , ConvParams(std::move(params)) {
       if (is_executable) {
-        this->input_ = input->save(this);
-        this->weight_ = weight->save(this);
-        this->bias_ = Variable::save_opt(bias.get(), this);
-        this->grad_output_ = grad_output->save(this);
+        this->input_ = SavedVariable(input, this);
+        this->weight_ = SavedVariable(weight, this);
+        if (bias.defined()) {
+          this->bias_ = SavedVariable(bias, this);
+        }
+        this->grad_output_ = SavedVariable(grad_output, this);
       }
     }
 

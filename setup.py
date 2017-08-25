@@ -31,7 +31,7 @@ import distutils.sysconfig
 cfg_vars = distutils.sysconfig.get_config_vars()
 for key, value in cfg_vars.items():
     if type(value) == str:
-            cfg_vars[key] = value.replace("-Wstrict-prototypes", "")
+        cfg_vars[key] = value.replace("-Wstrict-prototypes", "")
 
 ################################################################################
 # Monkey-patch setuptools to compile in parallel
@@ -208,6 +208,7 @@ class build_ext(setuptools.command.build_ext.build_ext):
         from tools.cwrap.plugins.AssertNDim import AssertNDim
         from tools.cwrap.plugins.Broadcast import Broadcast
         from tools.cwrap.plugins.ProcessorSpecificPlugin import ProcessorSpecificPlugin
+        from tools.autograd.gen_variable_type import gen_variable_type
         thp_plugin = THPPlugin()
         cwrap('torch/csrc/generic/TensorMethods.cwrap', plugins=[
             ProcessorSpecificPlugin(), BoolOption(), thp_plugin,
@@ -217,6 +218,11 @@ class build_ext(setuptools.command.build_ext.build_ext):
         cwrap('torch/csrc/cudnn/cuDNN.cwrap', plugins=[
             CuDNNPlugin(), NullableArguments()
         ])
+        # Build VariableType
+        gen_variable_type(
+            'torch/lib/build/ATen/ATen/Declarations.yaml',
+            'torch/csrc/autograd')
+
         # It's an old-style class in Python 2.7...
         setuptools.command.build_ext.build_ext.run(self)
 
@@ -338,13 +344,17 @@ main_sources = [
     "torch/csrc/autograd/init.cpp",
     "torch/csrc/autograd/engine.cpp",
     "torch/csrc/autograd/function.cpp",
-    "torch/csrc/autograd/variable.cpp",
+    # "torch/csrc/autograd/variable.cpp",
+    "torch/csrc/autograd/saved_variable.cpp",
     "torch/csrc/autograd/input_buffer.cpp",
     "torch/csrc/autograd/python_function.cpp",
     "torch/csrc/autograd/python_cpp_function.cpp",
     "torch/csrc/autograd/python_variable.cpp",
     "torch/csrc/autograd/python_engine.cpp",
     "torch/csrc/autograd/python_hook.cpp",
+    "torch/csrc/autograd/VariableTensor.cpp",
+    "torch/csrc/autograd/VariableType.cpp",
+    "torch/csrc/autograd/variable_type_registry.cpp",
     "torch/csrc/autograd/functions/batch_normalization.cpp",
     "torch/csrc/autograd/functions/convolution.cpp",
     "torch/csrc/autograd/functions/basic_ops.cpp",

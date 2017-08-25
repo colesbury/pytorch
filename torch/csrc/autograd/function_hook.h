@@ -5,10 +5,12 @@
 
 // A hook that's called on gradients
 
+namespace at { struct Tensor; }
+
 namespace torch { namespace autograd {
 
 struct Variable;
-using variable_list = std::vector<std::shared_ptr<Variable>>;
+using variable_list = std::vector<at::Tensor>;
 
 struct FunctionPreHook {
   virtual variable_list operator()(const variable_list& grads) = 0;
