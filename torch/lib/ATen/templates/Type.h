@@ -112,6 +112,7 @@ struct Type {
   virtual std::unique_ptr<Generator> generator() = 0;
   virtual Tensor unsafeTensorFromTH(void * th_pointer, bool retain) = 0;
   virtual const char * toString() const = 0;
+  virtual std::size_t elementSizeInBytes() const = 0;
   Type & toBackend(Backend b);
   Type & toScalarType(ScalarType s);
 
@@ -133,6 +134,7 @@ struct Type {
   ${type_method_declarations}
 protected:
   Context* context;
+  ${type_method_declarations_protected}
 };
 
 

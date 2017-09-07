@@ -1,6 +1,6 @@
 #pragma once
 
-#include<stdint.h>
+#include <stdint.h>
 #include <stdexcept>
 #include <string>
 #include "ATen/Half.h"
@@ -12,6 +12,8 @@ namespace at {
 
 class Scalar {
 public:
+  Scalar() : Scalar(0L) {}
+
   explicit Scalar(const Tensor & t)
   : tag(Tag::HAS_t), t(t) {
     AT_ASSERT(t.dim() == 0,"Attempting to create a Scalar from a %d dim tensor",t.dim());
@@ -39,7 +41,7 @@ public:
 #undef DEFINE_IMPLICIT_CTOR
 
   // return a new scalar that is guarenteed to be not backed by a tensor.
-  Scalar local() {
+  Scalar local() const {
     if (Tag::HAS_t != tag) {
       return *this;
     }
@@ -47,7 +49,7 @@ public:
   }
 
 #define DEFINE_ACCESSOR(type,name,member) \
-  type to##name () { \
+  type to##name () const { \
     if (Tag::HAS_t == tag) { \
       return local().to##name(); \
     } else if (Tag::HAS_d == tag) { \
@@ -66,6 +68,13 @@ public:
     } \
   }
 
+  Tensor toTensor() const {
+    if (Tag::HAS_t != tag) {
+      throw std::domain_error("Scalar not backed by Tensor");
+    }
+    return t;
+  }
+
   AT_FORALL_SCALAR_TYPES(DEFINE_ACCESSOR)
 
   //also support scalar.to<int64_t>();
@@ -73,13 +82,13 @@ public:
   T to();
 
 #undef DEFINE_ACCESSOR
-  bool isFloatingPoint() {
+  bool isFloatingPoint() const {
     return Tag::HAS_d == tag;
   }
-  bool isIntegral() {
+  bool isIntegral() const {
     return Tag::HAS_i == tag;
   }
-  bool isBackedByTensor() {
+  bool isBackedByTensor() const {
     return Tag::HAS_t == tag;
   }
 
