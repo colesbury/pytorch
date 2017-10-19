@@ -30,6 +30,9 @@ ${return_type} VariableType::${method_prefix}${api_name}(${formals}) const {
 METHOD_DEFINITION_NYI = CodeTemplate("""\
 throw std::runtime_error("${api_name}: NYI");""")
 
+BASE_CALL = CodeTemplate("""\
+baseType->${method_prefix}${base_name}(${unpacked_args})""")
+
 METHOD_DEFINITION_FALLTHROUGH = CodeTemplate("""\
 return baseType->${method_prefix}${api_name}(${unpacked_args});""")
 
@@ -92,35 +95,27 @@ if (should_compute_any_outputs()) {
 """)
 
 METHOD_DEFINITION_DERIVATIVE = CodeTemplate("""\
-auto flags = Function::flags({ ${tensor_args} });
-auto grad_fn = std::make_shared<${op}>();
 ${buffers}
-${save_inputs}
-auto ret = as_variable(baseType->${method_prefix}${base_name}(${unpacked_args}));
+${check_inplace}
+std::shared_ptr<${op}> grad_fn;
+auto flags = compute_flags({ ${tensor_args} });
+if (flags.requires_grad) {
+  grad_fn = std::make_shared<${op}>();
+  grad_fn->is_executable = true;
+  grad_fn->next_functions = compute_next_functions({ ${tensor_args} });
+  ${save_inputs}
+}
+${base_impl_call}
 ${version_counter}
-wrap_output(ret, std::move(flags), grad_fn);
-${save_outputs}
-return ${return_value};
-""")
-
-METHOD_DEFINITION_INPLACE = CodeTemplate("""\
-auto& pImpl = static_cast<VariableImpl&>(*self.get());
-check_inplace(pImpl);
-auto flags = Function::flags({ ${tensor_args} });
-auto grad_fn = std::make_shared<${op}>();
-${save_inputs}
-baseType->${method_prefix}${base_name}(${unpacked_args});
-pImpl.version_counter.increment();
-wrap_output(self, std::move(flags), grad_fn);
+set_flags(${result}, flags, grad_fn);
 ${save_outputs}
 return ${return_value};
 """)
 
 METHOD_DEFINITION_NOT_DIFFERENTIABLE = CodeTemplate("""\
-auto flags = Function::flags({ ${tensor_args} });
-auto grad_fn = std::make_shared<Error>("${api_name} is not differentiable");
+auto flags = compute_flags({ ${tensor_args} });
 auto ret = as_variable(baseType->${method_prefix}${api_name}(${unpacked_args}));
-wrap_output(ret, std::move(flags), std::move(grad_fn));
+set_flags(${result}, flags, std::make_shared<Error>("${api_name} is not differentiable"));
 return ret;
 """)
 
@@ -548,10 +543,6 @@ def create_variable_type(top_env, aten_declarations):
                 ptr = 'grad_fn.get()' if is_output else 'nullptr'
                 expr = 'SavedVariable({}, {})'.format(var, ptr)
             stmts.append('grad_fn->{} = {};'.format(name, expr))
-        if len(stmts) > 0:
-            return CONDITIONAL.substitute(
-                cond='flags.is_executable',
-                statements=stmts)
         return stmts
 
     def requires_unpack(arg):
@@ -601,63 +592,75 @@ def create_variable_type(top_env, aten_declarations):
             res.append(BUFFER_DECLARATION.substitute(name=name))
         return res
 
-    def emit_body(env, option):
-        if not is_implemented(option):
-            return METHOD_DEFINITION_NYI.substitute(option)
+    def emit_body(env, declaration):
+        if not is_implemented(declaration):
+            return METHOD_DEFINITION_NYI.substitute(declaration)
 
         body = []
-        body += unpack_args(env, option)
+        body += unpack_args(env, declaration)
 
-        combined = nested_dict(env, option)
-        if option['return_type'] in FALLTHROUGH_RETURN_TYPES:
+        env['result'] = 'ret'
+        if declaration['inplace']:
+            env['result'] = 'static_cast<Variable&>(self)'
+        elif len(declaration['returns']) > 1:
+            env['result'] = 'std::get<0>(ret)'
+
+        combined = nested_dict(env, declaration)
+        if declaration['return_type'] in FALLTHROUGH_RETURN_TYPES:
             body.extend(METHOD_DEFINITION_FALLTHROUGH.substitute(combined).split('\n'))
             return body
-        elif option['name'] in FALLTHROUGH_FUNCTIONS:
-            tmpl = (METHOD_DEFINITION_FALLTHROUGH_INPLACE if option['inplace']
+        elif declaration['name'] in FALLTHROUGH_FUNCTIONS:
+            tmpl = (METHOD_DEFINITION_FALLTHROUGH_INPLACE if declaration['inplace']
                     else METHOD_DEFINITION_FALLTHROUGH_VARIABLE)
             body.extend(tmpl.substitute(combined).split('\n'))
             return body
-        elif option.get('derivative') is None:
-            assert option['name'].endswith('_backward'), option['name']
+        elif declaration.get('derivative') is None:
+            assert declaration['name'].endswith('_backward'), declaration['name']
+            env['tensor_args'] = [arg['name'] for arg in declaration['arguments']
+                                  if arg['simple_type'] in {'Tensor', 'TensorList'}]
             body.extend(METHOD_DEFINITION_NOT_DIFFERENTIABLE.substitute(combined).split('\n'))
             return body
 
-        if option['inplace']:
-            body.extend(METHOD_DEFINITION_INPLACE.substitute(combined).split('\n'))
+        func = declaration['derivative']
+        env['op'] = func['op']
+        env['buffers'] = emit_buffers(func.get('buffers', []))
+        env['save_inputs'] = save_variables(declaration, func['saved_inputs'], False)
+        env['save_outputs'] = save_variables(declaration, func['saved_outputs'], True)
+        if len(env['save_outputs']) > 0:
+            env['save_outputs'] = CONDITIONAL.substitute(
+                cond='grad_fn', statements=env['save_outputs'])
+        dargs = differentiable_args(declaration, func)
+        env['tensor_args'] = [arg['name'] for arg in dargs]
+        env['check_inplace'] = ''
+        if declaration['inplace']:
+            env['check_inplace'] = 'check_inplace(self);'
+            env['version_counter'] = 'increment_version(self);'
+        elif any(arg['name'] == 'inplace' for arg in declaration['arguments']):
+            env['check_inplace'] = 'if (inplace) check_inplace(input);'
+            env['version_counter'] = 'if (inplace) increment_version(input);'
+        elif func.get('__view__', False):
+            env['version_counter'] = 'take_version_counter(ret, self);'
         else:
-            body.extend(METHOD_DEFINITION_DERIVATIVE.substitute(combined).split('\n'))
-        return body
-
-    def process_function(declaration):
-        if skip_function(declaration['name']):
-            return
-
-        env = {
-            'version_counter': [],
-        }
+            env['version_counter'] = ''
 
         if declaration['inplace']:
             env['return_value'] = 'self'
         else:
             env['return_value'] = '{}(std::move(ret))'.format(declaration['return_type'])
 
-        if declaration.get('derivative') is not None:
-            func = declaration['derivative']
-            env['op'] = func['op']
-            env['buffers'] = emit_buffers(func.get('buffers', []))
-            env['save_inputs'] = save_variables(declaration, func['saved_inputs'], False)
-            env['save_outputs'] = save_variables(declaration, func['saved_outputs'], True)
-            dargs = differentiable_args(declaration, func)
-            env['tensor_args'] = [arg['name'] for arg in dargs]
-            if any(arg['name'] == 'inplace' for arg in declaration['arguments']):
-                env['version_counter'].append('if (inplace) increment_version(input);')
-            if func.get('__view__', False):
-                env['version_counter'].append('take_version_counter(ret, self);')
+        base_call = BASE_CALL.substitute(combined)
+        if not declaration['inplace']:
+            base_call = 'auto ret = as_variable({})'.format(base_call)
+        env['base_impl_call'] = base_call + ';'
 
-        else:
-            env['tensor_args'] = [arg['name'] for arg in declaration['arguments']
-                                  if arg['simple_type'] in {'Tensor', 'TensorList'}]
+        body.extend(METHOD_DEFINITION_DERIVATIVE.substitute(combined).split('\n'))
+        return body
 
+    def process_function(declaration):
+        if skip_function(declaration['name']):
+            return
+
+        env = {}
         env['type_definition_body'] = emit_body(env, declaration)
 
         combined = nested_dict(env, declaration)
