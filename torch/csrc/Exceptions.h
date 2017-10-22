@@ -13,6 +13,9 @@
 #define END_HANDLE_TH_ERRORS_RET(retval)                                       \
   } catch (python_error &e) {                                                  \
     return retval;                                                             \
+  } catch (PyTorchError &e) {                                                  \
+    PyErr_SetString(e.python_type(), e.what());                                \
+    return retval;                                                             \
   } catch (std::exception &e) {                                                \
     PyErr_SetString(PyExc_RuntimeError, e.what());                             \
     return retval;                                                             \
@@ -61,6 +64,28 @@ struct python_error : public std::exception {
   PyObject* type;
   PyObject* value;
   PyObject* traceback;
+};
+
+struct PyTorchError : public std::exception {
+  virtual PyObject* python_type() = 0;
+  virtual const char* what() const noexcept override {
+    return msg.c_str();
+  }
+  std::string msg;
+};
+
+struct IndexError : public PyTorchError {
+  IndexError(const char *format, ...);
+  virtual PyObject* python_type() override {
+    return PyExc_IndexError;
+  }
+};
+
+struct TypeError : public PyTorchError {
+  TypeError(const char *format, ...);
+  virtual PyObject* python_type() override {
+    return PyExc_TypeError;
+  }
 };
 
 #ifdef _THP_CORE

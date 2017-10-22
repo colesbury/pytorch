@@ -67,25 +67,25 @@ class Variable(_C._VariableBase):
             return getattr(self.data, name)
         return object.__getattribute__(self, name)
 
-    def __getitem__(self, key):
-        if torch.is_tensor(key):
-            key = Variable(key)  # auto-wrap tensors
-        if isinstance(key, Variable):
-            if type(key.data).__name__ == 'ByteTensor':
-                return MaskedSelect.apply(self, key)
-            elif type(key.data).__name__ == 'LongTensor':
-                return IndexSelect.apply(self, 0, key)
-            # else fall through and raise an error in Index
-        return Index.apply(self, key)
+    # def __getitem__(self, key):
+    #     if torch.is_tensor(key):
+    #         key = Variable(key)  # auto-wrap tensors
+    #     if isinstance(key, Variable):
+    #         if type(key.data).__name__ == 'ByteTensor':
+    #             return MaskedSelect.apply(self, key)
+    #         elif type(key.data).__name__ == 'LongTensor':
+    #             return IndexSelect.apply(self, 0, key)
+    #         # else fall through and raise an error in Index
+    #     return Index.apply(self, key)
 
-    def __setitem__(self, key, value):
-        if isinstance(key, Variable) and type(key.data).__name__ == 'ByteTensor':
-            if isinstance(value, Variable):
-                return MaskedScatter.apply(self, key, value, True)
-            else:
-                return MaskedFill.apply(self, key, value, True)
-        else:
-            return SetItem.apply(self, key, value)
+    # def __setitem__(self, key, value):
+    #     if isinstance(key, Variable) and type(key.data).__name__ == 'ByteTensor':
+    #         if isinstance(value, Variable):
+    #             return MaskedScatter.apply(self, key, value, True)
+    #         else:
+    #             return MaskedFill.apply(self, key, value, True)
+    #     else:
+    #         return SetItem.apply(self, key, value)
 
     def __deepcopy__(self, memo):
         if not self.is_leaf:

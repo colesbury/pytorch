@@ -159,7 +159,7 @@ Tensor mm_mat2_backward(const Tensor & grad, const Tensor & mat1, IntList sizes,
   }
 }
 
-Tensor select_backward_scalar(Tensor grad, const Tensor & input, const Tensor & value) {
+Tensor selection_fn_backward_scalar(Tensor grad, const Tensor & input, const Tensor & value) {
   if (grad.dim() == 1) {
     // TODO: remove this once zero-dim tensor work properly in PyTorch
     grad = grad.view({});
@@ -169,7 +169,7 @@ Tensor select_backward_scalar(Tensor grad, const Tensor & input, const Tensor & 
   return grad_input;
 }
 
-Tensor select_backward(Tensor grad, int64_t dim, Tensor indices, IntList sizes, bool keepdim) {
+Tensor selection_fn_backward(Tensor grad, int64_t dim, Tensor indices, IntList sizes, bool keepdim) {
   if (!keepdim && sizes.size() > 1) {
     grad = grad.unsqueeze(dim);
     indices = indices.unsqueeze(dim);

@@ -32,6 +32,8 @@ struct VariableType : public at::Type {
   virtual const char * toString() const override;
   virtual at::TypeID ID() const override;
   virtual size_t elementSizeInBytes() const override;
+  virtual at::Type & toBackend(at::Backend b) const override;
+  virtual at::Type & toScalarType(at::ScalarType s) const override;
   static const char * typeString();
   at::Tensor unsafeTensorFromTH(void * th_pointer, bool retain) const override;
 
@@ -46,7 +48,8 @@ private:
   at::Tensor & unpack_byte(const Tensor & t, const char * name, int pos) const;
   at::Tensor & unpack_any(const Tensor & t, const char * name, int pos) const;
   at::Tensor unpack_opt(const Tensor & t, const char * name, int pos) const;
-  std::vector<at::Tensor> unpack(const at::TensorList &tl, const char *name, int pos) const;
+  std::vector<at::Tensor> unpack(at::TensorList tl, const char *name, int pos) const;
+  std::vector<at::Tensor> unpack_idxs(at::TensorList tl, const char *name, int pos) const;
 
   Variable as_variable(const Scalar & scalar) const;
   Variable as_variable(Tensor tensor) const;

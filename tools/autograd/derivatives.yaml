@@ -206,6 +206,8 @@
 - name: histc(Tensor self, int64_t bins, Scalar min, Scalar max)
   self: not_implemented("histc")
 
+# - name: index(Tensor self, TensorList indices)
+
 - name: index_add(Tensor self, int64_t dim, Tensor index, Tensor source)
   self: grad
   source: grad.index_select(dim, index)
@@ -230,7 +232,7 @@
 - name: is_set_to  # fallthrough
 
 - name: kthvalue(Tensor self, int64_t k, int64_t dim, bool keepdim)
-  self: select_backward(grad, dim, indices, self.sizes(), keepdim)
+  self: selection_fn_backward(grad, dim, indices, self.sizes(), keepdim)
 
 - name: le(Tensor self, Scalar other)
   self: zeros_like(self)
@@ -277,10 +279,10 @@
   self: zeros_like(self).masked_scatter_(mask, grad)
 
 - name: max(Tensor self, int64_t dim, bool keepdim)
-  self: select_backward(grad, dim, max_indices, self.sizes(), keepdim)
+  self: selection_fn_backward(grad, dim, max_indices, self.sizes(), keepdim)
 
 - name: max(Tensor self)
-  self: select_backward_scalar(grad, self, result)
+  self: selection_fn_backward_scalar(grad, self, result)
 
 - name: max(Tensor self, Tensor other)
   self: grad.clone().masked_fill_(self <= other, 0)
@@ -293,16 +295,16 @@
   self: grad.expand(self.sizes()) / self.numel()
 
 - name: median(Tensor self)
-  self: select_backward_scalar(grad, self, result)
+  self: selection_fn_backward_scalar(grad, self, result)
 
 - name: median(Tensor self, int64_t dim, bool keepdim)
-  self: select_backward(grad, dim, indices, self.sizes(), keepdim)
+  self: selection_fn_backward(grad, dim, indices, self.sizes(), keepdim)
 
 - name: min(Tensor self, int64_t dim, bool keepdim)
-  self: select_backward(grad, dim, min_indices, self.sizes(), keepdim)
+  self: selection_fn_backward(grad, dim, min_indices, self.sizes(), keepdim)
 
 - name: min(Tensor self)
-  self: select_backward_scalar(grad, self, result)
+  self: selection_fn_backward_scalar(grad, self, result)
 
 - name: min(Tensor self, Tensor other)
   self: grad.clone().masked_fill_(self >= other, 0)
@@ -313,7 +315,7 @@
   mat2: mm_mat2_backward(grad, self, mat2.sizes(), mat2.strides(), 1)
 
 - name: mode(Tensor self, int64_t dim, bool keepdim)
-  self: select_backward(grad, dim, indices, self.sizes(), keepdim)
+  self: selection_fn_backward(grad, dim, indices, self.sizes(), keepdim)
 
 - name: mul(Tensor self, Scalar other)
   self: grad * other
@@ -453,7 +455,7 @@
 - name: size  # fallthrough
 
 - name: sort(Tensor self, int64_t dim, bool descending)
-  self: select_backward(grad, dim, indices, self.sizes(), true)
+  self: selection_fn_backward(grad, dim, indices, self.sizes(), true)
 
 - name: split(Tensor self, int64_t split_size, int64_t dim=0)
   self: split_backward(grads, split_size, dim, self.sizes(), self.type())
@@ -507,7 +509,7 @@
 - name: tensor  # fallthrough
 
 - name: topk(Tensor self, int64_t k, int64_t dim, bool largest, bool sorted)
-  self: select_backward(grad, dim, indices, self.sizes(), true)
+  self: selection_fn_backward(grad, dim, indices, self.sizes(), true)
 
 - name: trace(Tensor self)
   self: trace_backward(grad, self.sizes())

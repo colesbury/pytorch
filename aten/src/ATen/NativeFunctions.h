@@ -3,6 +3,7 @@
 #include "ATen/ATen.h"
 #include "ATen/WrapDimUtils.h"
 #include "ATen/ExpandUtils.h"
+#include "ATen/Indexing.h"
 #include <vector>
 
 namespace at {
@@ -297,6 +298,38 @@ static inline Tensor stack(TensorList tensors, int64_t dim=0) {
     inputs[i] = tensors[i].unsqueeze(dim);
   }
   return at::cat(inputs, dim);
+}
+
+/*
+[NativeFunction]
+name: index
+arg: Tensor self
+arg: TensorList indices
+return: Tensor
+variants: method, function
+type_method_definition_level: base
+type_method_definition_dispatch: at::native::index
+[/NativeFunction]
+*/
+static inline Tensor index(const Tensor& self, TensorList indices) {
+  return at::indexing::indexTake(self, indices);
+}
+
+/*
+[NativeFunction]
+name: index_put_
+arg: Tensor self
+arg: TensorList indices
+arg: Tensor value
+return: Tensor
+variants: method
+type_method_definition_level: base
+type_method_definition_dispatch: at::native::index_put_
+[/NativeFunction]
+*/
+static inline Tensor & index_put_(Tensor& self, TensorList indices, const Tensor & value) {
+  at::indexing::indexPut(self, indices, value);
+  return self;
 }
 
 }

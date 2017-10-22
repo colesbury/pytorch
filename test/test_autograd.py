@@ -718,7 +718,7 @@ class TestAutograd(TestCase):
         x = torch.arange(1, 17).view(4, 4)
         y = Variable(x, requires_grad=True)
 
-        idx = [[1, 1, 3, 2, 1, 2], [0]]
+        idx = ([1, 1, 3, 2, 1, 2], [0])
         y[idx].sum().backward()
         expected_grad = torch.zeros(4, 4)
         for i in idx[0]:
@@ -729,7 +729,7 @@ class TestAutograd(TestCase):
 
         x = torch.arange(1, 17).view(4, 4)
         y = Variable(x, requires_grad=True)
-        idx = [[[1, 2], [0, 0]], [[0, 1], [1, 1]]]
+        idx = ([[1, 2], [0, 0]], [[0, 1], [1, 1]])
         y[idx].sum().backward()
         expected_grad = torch.Tensor([[0, 2, 0, 0],
                                       [1, 0, 0, 0],
@@ -740,7 +740,7 @@ class TestAutograd(TestCase):
         x = torch.arange(1, 65).view(4, 4, 4)
         y = Variable(x, requires_grad=True)
 
-        idx = [[1, 1, 1], slice(None), slice(None)]
+        idx = ([1, 1, 1], slice(None), slice(None))
         y[idx].sum().backward()
         expected_grad = torch.Tensor(4, 4, 4).zero_()
         expected_grad[1].fill_(3)

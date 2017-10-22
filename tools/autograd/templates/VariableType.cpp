@@ -75,6 +75,12 @@ const char * VariableType::toString() const {
 size_t VariableType::elementSizeInBytes() const {
   return baseType->elementSizeInBytes();
 }
+Type & VariableType::toBackend(Backend b) const {
+  return *VariableImpl::getType(baseType->toBackend(b));
+}
+Type & VariableType::toScalarType(ScalarType s) const {
+  return *VariableImpl::getType(baseType->toScalarType(s));
+}
 TypeID VariableType::ID() const {
   throw std::runtime_error("VariableType::ID() not implemented");
 }
@@ -126,7 +132,7 @@ Tensor VariableType::unpack_opt(const Tensor & t, const char * name, int pos) co
   return unpack(t, name, pos);
 }
 
-std::vector<at::Tensor> VariableType::unpack(const at::TensorList &tl, const char *name, int pos) const {
+std::vector<at::Tensor> VariableType::unpack(at::TensorList tl, const char *name, int pos) const {
   std::vector<at::Tensor> ret(tl.size());
   for (size_t i = 0; i < tl.size(); ++i) {
     const auto &t = tl[i];
@@ -136,11 +142,31 @@ std::vector<at::Tensor> VariableType::unpack(const at::TensorList &tl, const cha
                     toString(), i, pos, name);
     }
     if (&t.type() == this) {
-      ret[i] = static_cast<VariableImpl*>(t.pImpl)->data;
+      ret[i] = static_cast<const Variable&>(t).data();
     } else {
       runtime_error("Expected object of type %s but found type %s at position #%d "
                     "for iterable argument #%d '%s'",
                     toString(),t.type().toString(), i, pos, name);
+    }
+  }
+  return ret;
+}
+
+std::vector<at::Tensor> VariableType::unpack_idxs(at::TensorList tl, const char *name, int pos) const {
+  auto& longType = *VariableImpl::getType(baseType->toScalarType(kLong));
+  auto& byteType = *VariableImpl::getType(baseType->toScalarType(kByte));
+  std::vector<at::Tensor> ret(tl.size());
+  for (size_t i = 0; i < tl.size(); ++i) {
+    const auto &t = tl[i];
+    if (!t.defined()) {
+      continue;
+    } else if (!(t.type() == longType || t.type() == byteType)) {
+      runtime_error("Expected object of type %s or %s but found type %s at position #%d "
+                    "for iterable argument #%d '%s'",
+                    longType.toString(), byteType.toString(), t.type().toString(),
+                    i, pos, name);
+    } else  {
+      ret[i] = static_cast<const Variable&>(t).data();
     }
   }
   return ret;
@@ -238,6 +264,12 @@ static void check_no_requires_grad(const Tensor& tensor, const char* name) {
     msg += name;
     msg += "' is not implemented";
     throw std::runtime_error(msg);
+  }
+}
+
+static void check_no_requires_grad(TensorList tl, const char* name) {
+  for (auto & tensor : tl) {
+    check_no_requires_grad(tensor, name);
   }
 }
 
