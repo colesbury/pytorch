@@ -132,12 +132,12 @@ static Tensor new_from_data(const Type & type, int device, PyObject *data) {
 
 Tensor tensor_new(const Type& type, PyObject* args, PyObject* kwargs) {
   static PythonArgParser parser({
-    "new(*, int64_t device=-1)",
-    "new(IntList size, *, int64_t device=-1)",
+    "new(*, int64_t? device=-1)",
+    "new(IntList size, *, int64_t? device=-1)",
     "new(Storage storage)",
     "new(*, int64_t cdata)|hidden",
     "new(Tensor other)",
-    "new(PyObject* data, *, int64_t device=-1)",
+    "new(PyObject* data, *, int64_t? device=-1)",
   });
 
   PyObject* parsed_args[2];
@@ -174,7 +174,7 @@ static Tensor set_requires_grad(Tensor self, bool requires_grad) {
 Tensor variable_data_factory(const Type& type, PyObject* args, PyObject* kwargs) {
   static PythonArgParser parser({
     "new(Tensor other, *, bool requires_grad=False)",
-    "new(PyObject* data, *, int64_t device=-1, bool requires_grad=False)",
+    "new(PyObject* data, *, int64_t? device=-1, bool requires_grad=False)",
   });
 
   PyObject* parsed_args[3];
