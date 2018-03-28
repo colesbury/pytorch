@@ -26,6 +26,19 @@ Tensor _sum_cpu(const Tensor& self) {
   return self._sumall();
 }
 
+Tensor _var_cpu(const Tensor& self, bool unbiased) {
+  if (self.is_contiguous()) {
+    Tensor result = self.type().tensor({});
+    var_kernel(result, self, at::nullopt, unbiased);
+    return result;
+  }
+  return self._sumall();
+}
+
+Tensor _var_cuda(const Tensor& self, bool unbiased) {
+  throw std::runtime_error("NYI");
+}
+
 Tensor _prod_cpu(const Tensor &self) {
   if (self.is_contiguous()) {
     Tensor result = self.type().tensor({});

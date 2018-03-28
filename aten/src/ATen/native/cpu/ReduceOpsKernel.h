@@ -12,5 +12,9 @@ using reduce_fn = void(*)(Tensor &, const Tensor &, at::optional<int64_t>);
 extern DispatchStub<reduce_fn> sum_kernel;
 extern DispatchStub<reduce_fn> prod_kernel;
 
+using var_fn = void(*)(Tensor&, const Tensor&, at::optional<int64_t>, bool unbiased);
+
+extern DispatchStub<var_fn> var_kernel;
+
 }
 }

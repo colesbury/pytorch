@@ -668,6 +668,11 @@
 - func: unsqueeze_(Tensor self, int64_t dim) -> Tensor
   variants: method
 
+- func: var2(Tensor self, bool unbiased=True) -> Tensor
+  dispatch:
+    CPU: _var_cpu
+    CUDA: _var_cuda
+
 - func: view_as(Tensor self, Tensor other) -> Tensor
   variants: method
 

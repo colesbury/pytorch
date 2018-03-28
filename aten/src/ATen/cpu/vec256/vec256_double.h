@@ -88,9 +88,26 @@ Vec256<double> inline operator+(const Vec256<double>& a, const Vec256<double>& b
 }
 
 template <>
+Vec256<double> inline operator-(const Vec256<double>& a, const Vec256<double>& b) {
+  return _mm256_sub_pd(a, b);
+}
+
+template <>
 Vec256<double> inline operator*(const Vec256<double>& a, const Vec256<double>& b) {
   return _mm256_mul_pd(a, b);
 }
+
+template <>
+Vec256<double> inline operator/(const Vec256<double>& a, const Vec256<double>& b) {
+  return _mm256_div_pd(a, b);
+}
+
+#ifdef __FMA__
+template <>
+Vec256<double> inline fmadd(Vec256<double> a, Vec256<double> b, Vec256<double> c) {
+  return _mm256_fmadd_pd(a, b, c);
+}
+#endif
 
 #endif
 
