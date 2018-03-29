@@ -11,6 +11,7 @@ namespace vec256 {
 template <> class Vec256<float> {
 public:
   static constexpr int size = 8;
+  using array_t = float[size];
   __m256 values;
   Vec256() {}
   Vec256(__m256 v) : values(v) {}
@@ -79,6 +80,15 @@ public:
   }
   Vec256<float> sqrt() const {
     return _mm256_sqrt_ps(values);
+  }
+  __m128 extract(int part) const {
+    return _mm256_extractf128_ps(values, part);
+  }
+  __m128 low() const {
+    return extract(0);
+  }
+  __m128 high() const {
+    return extract(1);
   }
 };
 

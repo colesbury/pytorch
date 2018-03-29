@@ -11,6 +11,7 @@ namespace vec256 {
 template <> class Vec256<double> {
 public:
   static constexpr int size = 4;
+  using array_t = double[size];
   __m256d values;
   Vec256() {}
   Vec256(__m256d v) : values(v) {}
@@ -24,7 +25,7 @@ public:
     values = _mm256_loadu_pd(reinterpret_cast<const double*>(ptr));
   }
   void load_partial(const void *ptr, int count) {
-    double tmp_values[size];
+    array_t tmp_values;
     std::memcpy(tmp_values, ptr, count * sizeof(double));
     load(tmp_values);
   }
@@ -37,7 +38,7 @@ public:
     _mm256_storeu_pd(reinterpret_cast<double*>(ptr), values);
   }
   void store_partial(void* ptr, int count) const {
-    double tmp_values[size];
+    array_t tmp_values;
     store(tmp_values);
     std::memcpy(ptr, tmp_values, count * sizeof(double));
   }

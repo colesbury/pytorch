@@ -6,6 +6,7 @@
 #include "vec256_float.h"
 #include "vec256_double.h"
 #include "vec256_int.h"
+#include "vec256_conversions.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -18,10 +19,10 @@ namespace vec256 {
 
 template <typename T>
 std::ostream& operator<<(std::ostream& stream, const Vec256<T>& vec) {
-  T buf[Vec256<T>::size()];
+  T buf[Vec256<T>::size];
   vec.store(buf);
   stream << "vec[";
-  for (int i = 0; i != vec.size(); i++) {
+  for (int i = 0; i != vec.size; i++) {
     if (i != 0) {
       stream << ", ";
     }

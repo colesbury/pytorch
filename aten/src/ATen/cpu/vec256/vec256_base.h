@@ -16,11 +16,20 @@ namespace vec256 {
 
 // NOTE: If you specialize on a type, you must define all operations!
 
+
+template <class T>
+struct Vec128 {
+  T values[16 / sizeof(T)];
+};
+
 // emulates vectorized types
 template <class T>
 struct Vec256 {
   static constexpr int size = 32 / sizeof(T);
   __at_align32__ T values[32 / sizeof(T)];
+  using array_t = T[size];
+  using array128_t = T[size / 2];
+  T values[32 / sizeof(T)];
   Vec256() {}
   Vec256(T val) {
     for (int i = 0; i != size; i++) {
@@ -85,6 +94,19 @@ struct Vec256 {
   Vec256<T> sqrt() const {
     return map(std::sqrt);
   }
+  Vec128<T> extract(int part) const {
+    Vec128<T> ret;
+    for (int i = 0; i != size / 2; i++) {
+      ret.values[i] = values[i + part * size / 2];
+    }
+    return ret;
+  }
+  Vec128<T> low() const {
+    return extract(0);
+  }
+  Vec128<T> high() const {
+    return extract(1);
+  }
 };
 
 template <class T> Vec256<T> operator+(const Vec256<T> &a, const Vec256<T> &b) {
@@ -93,6 +115,10 @@ template <class T> Vec256<T> operator+(const Vec256<T> &a, const Vec256<T> &b) {
     c.values[i] = a.values[i] + b.values[i];
   }
   return c;
+}
+
+template <class T> Vec256<T> operator+(const Vec256<T> &a, int64_t b) {
+  return a + Vec256<T>((T)b);
 }
 
 template <class T> Vec256<T>& operator+=(Vec256<T> &a, const Vec256<T> &b) {
@@ -110,7 +136,7 @@ template <class T> Vec256<T>& operator+=(Vec256<T> &a, int64_t b) {
 
 template <class T> Vec256<T> inline operator-(const Vec256<T>& a, const Vec256<T>& b) {
   Vec256<T> c = Vec256<T>();
-  for (int i = 0; i != c.size(); i++) {
+  for (int i = 0; i != c.size; i++) {
     c.values[i] = a.values[i] - b.values[i];
   }
   return c;
@@ -145,7 +171,7 @@ template <class T> Vec256<T> inline operator*(const Vec256<T>& a, int64_t b) {
 template <class T>
 Vec256<T> inline operator/(const Vec256<T>& a, const Vec256<T>& b) {
   auto c = Vec256<T>();
-  for (int i = 0; i != c.size(); i++) {
+  for (int i = 0; i != c.size; i++) {
     c.values[i] = a.values[i] / b.values[i];
   }
   return c;
@@ -153,6 +179,10 @@ Vec256<T> inline operator/(const Vec256<T>& a, const Vec256<T>& b) {
 
 template <class T> Vec256<T> inline operator/(const Vec256<T>& a, T b) {
   return a / Vec256<T>(b);
+}
+
+template <class T> Vec256<T> inline operator/(T a, const Vec256<T>& b) {
+  return Vec256<T>(a) / b;
 }
 
 template <class T> Vec256<T> inline operator/(const Vec256<T>& a, int64_t b) {
