@@ -29,7 +29,6 @@ struct Vec256 {
   __at_align32__ T values[32 / sizeof(T)];
   using array_t = T[size];
   using array128_t = T[size / 2];
-  T values[32 / sizeof(T)];
   Vec256() {}
   Vec256(T val) {
     for (int i = 0; i != size; i++) {
