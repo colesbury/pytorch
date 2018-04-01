@@ -114,7 +114,7 @@ Vec256<float> inline operator/(const Vec256<float>& a, const Vec256<float>& b) {
 
 #ifdef __FMA__
 template <>
-Vec256<float> inline fmadd(Vec256<float> a, Vec256<float> b, Vec256<float> c) {
+Vec256<float> inline fmadd(const Vec256<float>& a, const Vec256<float>& b, const Vec256<float>& c) {
   return _mm256_fmadd_ps(a, b, c);
 }
 #endif

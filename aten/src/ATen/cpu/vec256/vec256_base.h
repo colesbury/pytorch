@@ -108,7 +108,7 @@ struct Vec256 {
   }
 };
 
-template <class T> Vec256<T> operator+(const Vec256<T> &a, const Vec256<T> &b) {
+template <class T> Vec256<T> operator+(const Vec256<T>& a, const Vec256<T>& b) {
   Vec256<T> c = Vec256<T>();
   for (int i = 0; i != c.size; i++) {
     c.values[i] = a.values[i] + b.values[i];
@@ -116,20 +116,20 @@ template <class T> Vec256<T> operator+(const Vec256<T> &a, const Vec256<T> &b) {
   return c;
 }
 
-template <class T> Vec256<T> operator+(const Vec256<T> &a, int64_t b) {
+template <class T> Vec256<T> operator+(const Vec256<T>& a, int64_t b) {
   return a + Vec256<T>((T)b);
 }
 
-template <class T> Vec256<T>& operator+=(Vec256<T> &a, const Vec256<T> &b) {
+template <class T> Vec256<T>& operator+=(Vec256<T>& a, const Vec256<T>& b) {
   a = a + b;
   return a;
 }
 
-template <class T> Vec256<T>& operator+=(Vec256<T> &a, T b) {
+template <class T> Vec256<T>& operator+=(Vec256<T>& a, T b) {
   return a += Vec256<T>(b);
 }
 
-template <class T> Vec256<T>& operator+=(Vec256<T> &a, int64_t b) {
+template <class T> Vec256<T>& operator+=(Vec256<T>& a, int64_t b) {
   return a += Vec256<T>((T)b);
 }
 
@@ -141,12 +141,12 @@ template <class T> Vec256<T> inline operator-(const Vec256<T>& a, const Vec256<T
   return c;
 }
 
-template <class T> Vec256<T>& operator-=(Vec256<T> &a, const Vec256<T> &b) {
+template <class T> Vec256<T>& operator-=(Vec256<T>& a, const Vec256<T>& b) {
   a = a - b;
   return a;
 }
 
-template <class T> Vec256<T> operator*(const Vec256<T> &a, const Vec256<T> &b) {
+template <class T> Vec256<T> operator*(const Vec256<T>& a, const Vec256<T>& b) {
   Vec256<T> c = Vec256<T>();
   for (int i = 0; i != c.size; i++) {
     c.values[i] = a.values[i] * b.values[i];
@@ -154,13 +154,21 @@ template <class T> Vec256<T> operator*(const Vec256<T> &a, const Vec256<T> &b) {
   return c;
 }
 
-template <class T> Vec256<T>& operator*=(Vec256<T> &a, const Vec256<T> &b) {
+template <class T> Vec256<T>& operator*=(Vec256<T>& a, const Vec256<T>& b) {
   a = a * b;
   return a;
 }
 
+template <class T> Vec256<T>& operator*=(Vec256<T>& a, T b) {
+  return a *= Vec256<T>(b);
+}
+
 template <class T> Vec256<T> inline operator*(const Vec256<T>& a, T b) {
   return a * Vec256<T>(b);
+}
+
+template <class T> Vec256<T> inline operator*(T a, const Vec256<T>& b) {
+  return Vec256<T>(a) * b;
 }
 
 template <class T> Vec256<T> inline operator*(const Vec256<T>& a, int64_t b) {
@@ -188,20 +196,21 @@ template <class T> Vec256<T> inline operator/(const Vec256<T>& a, int64_t b) {
   return a / Vec256<T>((T)b);
 }
 
-template <class T> Vec256<T>& operator/=(Vec256<T> &a, const Vec256<T> &b) {
+template <class T> Vec256<T>& operator/=(Vec256<T>& a, const Vec256<T>& b) {
   a = a / b;
   return a;
 }
 
-template <class T> Vec256<T>& operator/=(Vec256<T> &a, const T &b) {
+template <class T> Vec256<T>& operator/=(Vec256<T>& a, const T &b) {
   return a /= Vec256<T>(b);
 }
 
-template <class T> Vec256<T>& operator/=(Vec256<T> &a, int64_t b) {
+template <class T> Vec256<T>& operator/=(Vec256<T>& a, int64_t b) {
   return a /= Vec256<T>((T)b);
 }
 
-template <class T> Vec256<T> inline fmadd(Vec256<T> a, Vec256<T> b, Vec256<T> c) {
+template <class T>
+Vec256<T> inline fmadd(const Vec256<T>& a, const Vec256<T>& b, const Vec256<T>& c) {
   return a * b + c;
 }
 

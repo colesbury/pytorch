@@ -1,5 +1,6 @@
 #include "ATen/native/cpu/VarianceKernel.h"
 
+#include <algorithm>
 #include <numeric>
 
 #include "ATen/Dispatch.h"
@@ -17,11 +18,12 @@ static inline int64_t round_down(int64_t a, int64_t m) {
 }
 
 // Computes the harmonic sequence 1, 1/2, 1/3, ...
+template<typename T>
 struct HarmonicSequence {
-  using Vec = Vec256<double>;
+  using Vec = Vec256<T>;
 
   HarmonicSequence() {
-    Vec::array_t init;
+    T init[Vec::size];
     for (int i = 0; i != Vec::size; i++) {
       init[i] = i + 1;
     }
@@ -29,17 +31,17 @@ struct HarmonicSequence {
     (1.0 / counts).store(factors);
   }
 
-  double next() {
+  T next() {
     if (idx == Vec::size) {
-      counts += 1;
+      counts += Vec::size;
       (1.0 / counts).store(factors);
       idx = 0;
     }
     return factors[idx++];
   }
 
-  Vec counts = 0;
-  Vec::array_t factors;
+  Vec counts;
+  T factors[Vec::size];
   int64_t idx = 0;
 };
 
@@ -52,7 +54,7 @@ int64_t var128_v2(const double* data, double* mean_out, double* m2_out, int64_t 
   Vec mean[4] = {0, 0, 0, 0};
   Vec M2[4] = {0, 0, 0, 0};
 
-  HarmonicSequence harmonic;
+  HarmonicSequence<double> harmonic;
 
   int count = 0;
   for (int64_t row = 0; row != rows; row++) {
@@ -75,32 +77,141 @@ int64_t var128_v2(const double* data, double* mean_out, double* m2_out, int64_t 
   return count;
 }
 
+static int64_t var128_v3(const float* data, float* mean_out, float* m2_out, float* c_out, int64_t rows, int64_t stride) {
+  using Vec = Vec256<float>;
+  Vec c[4] = {0, 0, 0, 0};
+  Vec mean[4] = {0, 0, 0, 0};
+
+  // First estimate the mean using Kahan summation
+  for (int64_t row = 0; row != rows; row++) {
+    for (int j = 0; j != 4; j++) {
+      auto val = Vec::s_load(&data[row * stride + j * Vec::size]);
+      auto y = val - c[j];
+      auto t = mean[j] + y;
+      c[j] = (t - mean[j]) - y;
+      mean[j] = t;
+    }
+  }
+
+  float inv_rows = 1.0f / rows;
+  for (int j = 0; j != 4; j++) {
+    mean[j] *= inv_rows;
+    c[j] *= inv_rows;
+    c[j].store(&c_out[j * Vec::size]);
+  }
+
+  Vec M2[4] = {0, 0, 0, 0};
+  Vec correction[4] = {0, 0, 0, 0};
+  for (int64_t row = 0; row != rows; row++) {
+    for (int j = 0; j != 4; j++) {
+      auto val = Vec::s_load(&data[row * stride + j * Vec::size]);
+      auto delta = val - mean[j];
+      M2[j] = fmadd(delta, delta, M2[j]);
+      correction[j] += delta;
+    }
+  }
+
+  for (int j = 0; j != 4; j++) {
+    M2[j] -= inv_rows * correction[j] * correction[j];
+  }
+
+  for (int j = 0; j != 4; j++) {
+    mean[j].store(&mean_out[j * Vec::size]);
+    M2[j].store(&m2_out[j * Vec::size]);
+  }
+
+  return rows;
+}
+
+static int64_t var128_v3_update(const float* data, float* mean_out, float* m2_out, int64_t rows, int64_t stride) {
+  using Vec = Vec256<float>;
+  double running_mean = 0;
+  double running_m2 = 0;
+  int64_t running_n = 0;
+  auto WIDTH = 32;
+
+  for (int i = 0; i < rows; i += 256) {
+    float meanf[4 * Vec::size];
+    float cf[4 * Vec::size];
+    float m2f[4 * Vec::size];
+    int sub_rows = std::min(rows - i, int64_t(256));
+    int64_t count = var128_v3(data + i * stride, meanf, m2f, cf, sub_rows, stride);
+
+    double mean[4 * Vec::size];
+    double m2[4 * Vec::size];
+    for (int j = 0; j < WIDTH; j++) {
+      mean[j] = meanf[j] - (double)cf[j];
+      m2[j] = (double)m2f[j];
+    }
+
+    for (int step = 1; step != WIDTH; step = step << 1) {
+      for (int j = 0; j < WIDTH; j += step * 2) {
+        double delta = (mean[j] - mean[j + step]);
+        mean[j] = (mean[j] + mean[j + step]) / 2;
+        m2[j] += m2[j + step] + delta * delta * count / 2;
+      }
+      count *= 2;
+    }
+
+    auto delta = mean[0] - running_mean;
+    running_mean  = (running_mean * running_n + count * mean[0]) / (count + running_n);
+    auto delta2 = mean[0] - running_mean;
+    running_m2 += m2[0] + (delta * delta2 * count * running_n) / (count + running_n);
+    running_n += count;
+    // std::cout << "running_mean: " << running_mean << " running_m2: " << (running_m2)/running_n << " " << delta << "\n";
+  }
+  *mean_out = (float)running_mean;
+  *m2_out =  (float)running_m2;
+  return running_n;
+}
+
+static int64_t var128_v4(const float* data, float* mean_out, float* m2_out, int64_t rows, int64_t stride) {
+  float c = 0;
+  float mean = 0;
+
+  // First estimate the mean using Kahan summation
+  for (int64_t row = 0; row != rows; row++) {
+    for (int j = 0; j != 32; j++) {
+      auto val = data[row * stride + j];
+      auto y = val - c;
+      auto t = mean + y;
+      c = (t - mean) - y;
+      mean = t;
+    }
+  }
+
+  mean /= rows * 32;
+
+  float M2 = 0;
+  float correction = 0;
+  for (int64_t row = 0; row != rows; row++) {
+    for (int j = 0; j != 32; j++) {
+      auto val = data[row * stride + j];
+      auto delta = val - mean;
+      M2 = delta * delta + M2;
+      correction += delta;
+    }
+  }
+
+  M2 -= correction * correction / (rows * 32);
+  *mean_out = mean;
+  *m2_out = M2;
+
+  return rows * 32;
+}
+
+
 template <>
 int64_t var128_v2(const float* data, double* mean_out, double* m2_out, int64_t rows, int64_t stride) {
   using Vec = Vec256<double>;
-
-  // double tmp1[4] = {1.0, 2.0, 3.0, 4.0};
-  // double tmp2[4] = {10.0, 12.0, 13.0, 14.0};
-  // Vec a = Vec::s_load(tmp1);
-  // Vec b = Vec::s_load(tmp2);
-  // auto tmp = cast_float(a, b);
-  // std::cout << a << "\n";
-  // std::cout << b << "\n";
-  // std::cout << tmp << "\n";
-  // a = cast_double(tmp.low());
-  // b = cast_double(tmp.high());
-  // tmp = cast_float(a, b);
-  // std::cout << a << "\n";
-  // std::cout << b << "\n";
-  // std::cout << tmp << "\n";
 
   for (int offset = 0; offset != 32; offset += 16) {
     Vec mean[4] = {0, 0, 0, 0};
     Vec M2[4] = {0, 0, 0, 0};
 
-    HarmonicSequence harmonic;
+    HarmonicSequence<double> harmonic;
 
-    auto update = [&](int j, double factor, Vec val) {
+    auto update = [&](int j, double factor, const Vec& val) {
       auto delta = val - mean[j];
       mean[j] = fmadd(delta, Vec(factor), mean[j]);
       auto delta2 = val - mean[j];
@@ -112,14 +223,12 @@ int64_t var128_v2(const float* data, double* mean_out, double* m2_out, int64_t r
       auto floats = Vec256<float>::s_load(&data[row * stride + offset]);
       update(0, factor, cast_double(floats.low()));
       update(1, factor, cast_double(floats.high()));
-      floats.load(&data[row * stride + Vec256<float>::size + offset]);
+      floats.load(&data[row * stride + offset + floats.size]);
       update(2, factor, cast_double(floats.low()));
       update(3, factor, cast_double(floats.high()));
     }
 
     for (int j = 0; j < 4; j++) {
-      // auto meanf = cast_float(mean[j], mean[j + 1]);
-      // auto M2f = cast_float(M2[j], M2[j + 1]);
       mean[j].store(&mean_out[j * Vec::size + offset]);
       M2[j].store(&m2_out[j * Vec::size + offset]);
     }
@@ -138,8 +247,8 @@ struct VarReduction {
   static void apply(Tensor& res, const Tensor& self, at::optional<int64_t> dim) {
     internal::init_tbb_num_threads();
 
-    auto out = res.data<scalar_t>();
-    auto data = self.data<scalar_t>();
+    auto out = res.data<float>();
+    auto data = self.data<float>();
     auto numel = self.numel();
     if (!dim.has_value()) {
       *out = reduce_all(data, numel);
@@ -147,21 +256,21 @@ struct VarReduction {
     }
   }
 
-  static scalar_t reduce_all(const scalar_t* data, int size) {
-    double mean[WIDTH];
-    double M2[WIDTH];
+  static float reduce_all(const float* data, int size) {
+    float mean[WIDTH];
+    float M2[WIDTH];
 
     int64_t k = size / WIDTH;
-    int64_t count = var128_v2(data, mean, M2, k, WIDTH);
+    int64_t count = var128_v3_update(data, mean, M2, k, WIDTH);
 
-    for (int step = 1; step != WIDTH; step = step << 1) {
-      for (int j = 0; j < WIDTH; j += step * 2) {
-        auto delta = mean[j] - mean[j + step];
-        mean[j] = (mean[j] + mean[j + step]) / 2;
-        M2[j] += M2[j + step] + delta * delta * count / 2;
-      }
-      count *= 2;
-    }
+    // for (int step = 1; step != WIDTH; step = step << 1) {
+    //   for (int j = 0; j < WIDTH; j += step * 2) {
+    //     auto delta = mean[j] - mean[j + step];
+    //     mean[j] = (mean[j] + mean[j + step]) / 2;
+    //     M2[j] += M2[j + step] + delta * delta * count / 2;
+    //   }
+    //   count *= 2;
+    // }
 
     return M2[0] / count;
   }
