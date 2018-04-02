@@ -28,40 +28,37 @@ static void parallel_for(int64_t end, int64_t step, bool parallelize, F func) {
   }
 }
 
-static double diff(timespec start, timespec end);
-
-template <typename Op>
-static double benchmark(Op op) {
-  const int N = 10000;
-  timespec time1, time2;
-  op();
-  clock_gettime(CLOCK_MONOTONIC, &time1);
-  for (int i = 0; i < N; i++)
-    op();
-  clock_gettime(CLOCK_MONOTONIC, &time2);
-  double time = diff(time1, time2);
-  std::cout << (time/N)*1e9 << " ns \n";
-  return time;
-}
-
-static double diff(timespec start, timespec end)
-{
-  timespec temp;
-  if ((end.tv_nsec-start.tv_nsec)<0) {
-    temp.tv_sec = end.tv_sec-start.tv_sec-1;
-    temp.tv_nsec = 1000000000+end.tv_nsec-start.tv_nsec;
-  } else {
-    temp.tv_sec = end.tv_sec-start.tv_sec;
-    temp.tv_nsec = end.tv_nsec-start.tv_nsec;
+struct VecLoader {
+  template<typename scalar_t>
+  Vec256<scalar_t> load(const scalar_t* data, int j) const {
+    using Vec = Vec256<scalar_t>;
+    return Vec::s_load(&data[j * Vec::size]);
   }
-  return (double)temp.tv_sec + temp.tv_nsec * 1e-9;
-}
+};
 
-static inline int64_t round_down(int64_t a, int64_t m) {
-  return a - (a % m);
-}
+struct PartialLoader {
+  PartialLoader(int width) : width(width) {}
 
-static void var128(const float* data, double* mean_out, double* m2_out, int64_t rows, int64_t stride) {
+  template<typename scalar_t>
+  Vec256<scalar_t> load(const scalar_t* data, int j) const {
+    using Vec = Vec256<scalar_t>;
+    int len = width - j * Vec::size;
+    if (len >= Vec::size) {
+      return Vec::s_load(&data[j * Vec::size]);
+    } else if (len > 0) {
+      Vec ret;
+      ret.load_partial(&data[j * Vec::size], len);
+      return ret;
+    } else {
+      return Vec(0);
+    }
+  }
+
+  int width;
+};
+
+template<typename Loader>
+static void var128(const float* data, double* mean_out, double* m2_out, int64_t rows, int64_t stride, const Loader& loader) {
   using Vec = Vec256<float>;
   Vec c[4] = {0, 0, 0, 0};
   Vec mean[4] = {0, 0, 0, 0};
@@ -69,7 +66,7 @@ static void var128(const float* data, double* mean_out, double* m2_out, int64_t 
   // First estimate the mean using Kahan summation
   for (int64_t row = 0; row != rows; row++) {
     for (int j = 0; j != 4; j++) {
-      auto val = Vec::s_load(&data[row * stride + j * Vec::size]);
+      auto val = loader.load(&data[row * stride], j);
       auto y = val - c[j];
       auto t = mean[j] + y;
       c[j] = (t - mean[j]) - y;
@@ -91,7 +88,7 @@ static void var128(const float* data, double* mean_out, double* m2_out, int64_t 
   Vec correction[4] = {0, 0, 0, 0};
   for (int64_t row = 0; row != rows; row++) {
     for (int j = 0; j != 4; j++) {
-      auto val = Vec::s_load(&data[row * stride + j * Vec::size]);
+      auto val = loader.load(&data[row * stride], j);
       auto delta = val - mean[j];
       M2[j] = fmadd(delta, delta, M2[j]);
       correction[j] += delta;
@@ -129,7 +126,11 @@ struct VarReduction {
     }
     void operator()(const range& r) {
       if (n == 0 && r.size() <= 256) {
-        var128(&data[r.begin() * stride], mean, m2, r.size(), stride);
+        if (width == WIDTH) {
+          var128(&data[r.begin() * stride], mean, m2, r.size(), stride, VecLoader());
+        } else {
+          var128(&data[r.begin() * stride], mean, m2, r.size(), stride, PartialLoader(width));
+        }
         n = r.size();
         return;
       }
@@ -158,9 +159,9 @@ struct VarReduction {
     }
     __at_align32__ double mean[WIDTH];
     __at_align32__ double m2[WIDTH];
+    int64_t n = 0;
     const scalar_t* data;
     int64_t stride;
-    int64_t n = 0;
     int width;
   };
 
@@ -221,30 +222,25 @@ struct VarReduction {
       int width = std::min(WIDTH, (int)(cols - col));
       VarOp op(&data[col], stride, width);
       op(range(0, rows));
-      for (int j = 0; j != width; j++) {
-        out[col + j] = (float)(op.m2[j] / op.n);
+      for (int i = 0; i != width; i++) {
+        out[col + i] = op.m2[i] / op.n;
       }
     });
-
-    // if (cols_rounded != cols) {
-    //   throw std::runtime_error("NIY: cols_rounded != cols");
-    // }
-  }
-
-  static void update(vec4d& mean_a, vec4d& m2_a, const vec4d& mean_b, const vec4d& m2_b, int64_t n_a, int64_t n_b, double scale) {
-    auto delta = mean_b - mean_a;
-    mean_a = (mean_a * n_a + mean_b * n_b) * scale;
-    m2_a += m2_b + (delta * delta * n_a * n_b) * scale;
   }
 
   static void update(double* mean_a, double* m2_a, const double* mean_b, const double* m2_b, int64_t n_a, int64_t n_b) {
     double scale = 1.0 / (n_a + n_b);
+    auto update_vec = [&](vec4d& mean_a, vec4d& m2_a, const vec4d& mean_b, const vec4d& m2_b) {
+      auto delta = mean_b - mean_a;
+      mean_a = (mean_a * n_a + mean_b * n_b) * scale;
+      m2_a += m2_b + (delta * delta * n_a * n_b) * scale;
+    };
     for (int i = 0; i != WIDTH; i += vec4d::size) {
       auto mean1 = vec4d::s_load(&mean_a[i]);
       auto mean2 = vec4d::s_load(&mean_b[i]);
       auto m2_1 = vec4d::s_load(&m2_a[i]);
       auto m2_2 = vec4d::s_load(&m2_b[i]);
-      update(mean1, m2_1, mean2, m2_2, n_a, n_b, scale);
+      update_vec(mean1, m2_1, mean2, m2_2);
       mean1.store(&mean_a[i]);
       m2_1.store(&m2_a[i]);
     }
