@@ -32,7 +32,7 @@ Tensor _var_cpu(const Tensor& self, bool unbiased) {
     var_kernel(result, self, at::nullopt, unbiased);
     return result;
   }
-  return self._sumall();
+  throw std::runtime_error("not contiguous");
 }
 
 Tensor _var_cuda(const Tensor& self, bool unbiased) {
@@ -130,6 +130,18 @@ Tensor prod(const Tensor &self, int64_t dim_, bool keepdim) {
   int64_t dim = maybe_wrap_dim(dim_, self.dim());
   Tensor result = self.type().tensor();
   return at::prod_out(result, self, dim, keepdim);
+}
+
+Tensor var2(const Tensor& self, int64_t dim, bool unbiased) {
+  if (!self.is_contiguous()) {
+    throw std::runtime_error("not contiguous");
+  }
+  dim = maybe_wrap_dim(dim, self.dim());
+  Tensor result = self.type().tensor();
+  _dimreduce_setup(result, self, dim);
+  var_kernel(result, self, dim, unbiased);
+  result.squeeze_(dim);
+  return result;
 }
 
 // \DIM REDUCE ################################################################

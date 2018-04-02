@@ -673,6 +673,8 @@
     CPU: _var_cpu
     CUDA: _var_cuda
 
+- func: var2(Tensor self, int64_t dim, bool unbiased=True) -> Tensor
+
 - func: view_as(Tensor self, Tensor other) -> Tensor
   variants: method
 
