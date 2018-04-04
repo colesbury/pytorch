@@ -58,7 +58,7 @@ struct PartialLoader {
 };
 
 template<typename Loader>
-static void var128(const float* data, double* mean_out, double* m2_out, int64_t rows, int64_t stride, const Loader& loader) {
+static void var128(const float* data, double* sum_out, double* m2_out, int64_t rows, int64_t stride, const Loader& loader) {
   using Vec = Vec256<float>;
   Vec c[4] = {0, 0, 0, 0};
   Vec mean[4] = {0, 0, 0, 0};
@@ -76,12 +76,11 @@ static void var128(const float* data, double* mean_out, double* m2_out, int64_t 
 
   float inv_rows = 1.0f / rows;
   for (int j = 0; j != 4; j++) {
-    mean[j] *= inv_rows;
-    c[j] *= inv_rows;
     auto low = cast_double(mean[j].low()) - cast_double(c[j].low());
     auto high = cast_double(mean[j].high()) - cast_double(c[j].high());
-    low.store(&mean_out[j * Vec::size]);
-    high.store(&mean_out[j * Vec::size + Vec::size / 2]);
+    low.store(&sum_out[j * Vec::size]);
+    high.store(&sum_out[j * Vec::size + Vec::size / 2]);
+    mean[j] *= inv_rows;
   }
 
   Vec M2[4] = {0, 0, 0, 0};
@@ -119,17 +118,17 @@ struct VarReduction {
   struct VarOp {
     VarOp(const scalar_t* data, int64_t stride, int width=WIDTH)
      : data(data), stride(stride), width(width) {
-      memset(mean, 0, sizeof(mean));
+      memset(sum, 0, sizeof(sum));
       memset(m2, 0, sizeof(m2));
     }
     VarOp(VarOp& s, tbb::split) : VarOp(s.data, s.stride, s.width) {
     }
     void operator()(const range& r) {
       if (n == 0 && r.size() <= 256) {
-        if (width == WIDTH) {
-          var128(&data[r.begin() * stride], mean, m2, r.size(), stride, VecLoader());
+        if (__builtin_expect(width == WIDTH, 1)) {
+          var128(&data[r.begin() * stride], sum, m2, r.size(), stride, VecLoader());
         } else {
-          var128(&data[r.begin() * stride], mean, m2, r.size(), stride, PartialLoader(width));
+          var128(&data[r.begin() * stride], sum, m2, r.size(), stride, PartialLoader(width));
         }
         n = r.size();
         return;
@@ -142,22 +141,28 @@ struct VarReduction {
       }
     }
     void join(VarOp& rhs) {
-      update(mean, m2, rhs.mean, rhs.m2, n, rhs.n);
-      n += rhs.n;
+      if (rhs.n == 0) {
+        return;
+      } else if (n == 0) {
+        *this = rhs;
+      } else {
+        update(sum, m2, rhs.sum, rhs.m2, n, rhs.n);
+        n += rhs.n;
+      }
     }
     std::tuple<double, double> horizontal_reduce() {
       int64_t count = n;
       for (int step = 1; step != WIDTH; step = step << 1) {
         for (int j = 0; j < WIDTH; j += step * 2) {
-          double delta = (mean[j] - mean[j + step]);
-          mean[j] = (mean[j] + mean[j + step]) / 2;
-          m2[j] += m2[j + step] + delta * delta * count / 2;
+          double delta = (sum[j] - sum[j + step]);
+          sum[j] += sum[j + step];
+          m2[j] += m2[j + step] + delta * delta / (2 * count);
         }
         count *= 2;
       }
-      return std::make_tuple(mean[0], m2[0]);
+      return std::make_tuple(sum[0] / count, m2[0]);
     }
-    __at_align32__ double mean[WIDTH];
+    __at_align32__ double sum[WIDTH];
     __at_align32__ double m2[WIDTH];
     int64_t n = 0;
     const scalar_t* data;
@@ -228,20 +233,21 @@ struct VarReduction {
     });
   }
 
-  static void update(double* mean_a, double* m2_a, const double* mean_b, const double* m2_b, int64_t n_a, int64_t n_b) {
-    double scale = 1.0 / (n_a + n_b);
-    auto update_vec = [&](vec4d& mean_a, vec4d& m2_a, const vec4d& mean_b, const vec4d& m2_b) {
-      auto delta = mean_b - mean_a;
-      mean_a = (mean_a * n_a + mean_b * n_b) * scale;
-      m2_a += m2_b + (delta * delta * n_a * n_b) * scale;
+  static void update(double* sum_a, double* m2_a, const double* sum_b, const double* m2_b, int64_t n_a, int64_t n_b) {
+    double ratio = n_b / (double)n_a;
+    double scale = n_a / (double)(n_b * (n_a + n_b));
+    auto update_vec = [&](vec4d& sum_a, vec4d& m2_a, const vec4d& sum_b, const vec4d& m2_b) {
+      auto delta = ratio * sum_a - sum_b;
+      sum_a += sum_b;
+      m2_a += m2_b + (delta * delta) * scale;
     };
     for (int i = 0; i != WIDTH; i += vec4d::size) {
-      auto mean1 = vec4d::s_load(&mean_a[i]);
-      auto mean2 = vec4d::s_load(&mean_b[i]);
+      auto sum1 = vec4d::s_load(&sum_a[i]);
+      auto sum2 = vec4d::s_load(&sum_b[i]);
       auto m2_1 = vec4d::s_load(&m2_a[i]);
       auto m2_2 = vec4d::s_load(&m2_b[i]);
-      update_vec(mean1, m2_1, mean2, m2_2);
-      mean1.store(&mean_a[i]);
+      update_vec(sum1, m2_1, sum2, m2_2);
+      sum1.store(&sum_a[i]);
       m2_1.store(&m2_a[i]);
     }
   }

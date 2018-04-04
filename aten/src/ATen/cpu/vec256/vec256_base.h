@@ -93,7 +93,7 @@ struct Vec256 {
   Vec256<T> sqrt() const {
     return map(std::sqrt);
   }
-  Vec128<T> extract(int part) const {
+  Vec128<T> extract128(int part) const {
     Vec128<T> ret;
     for (int i = 0; i != size / 2; i++) {
       ret.values[i] = values[i + part * size / 2];
@@ -101,10 +101,10 @@ struct Vec256 {
     return ret;
   }
   Vec128<T> low() const {
-    return extract(0);
+    return extract128(0);
   }
   Vec128<T> high() const {
-    return extract(1);
+    return extract128(1);
   }
 };
 

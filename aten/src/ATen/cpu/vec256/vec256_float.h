@@ -81,14 +81,11 @@ public:
   Vec256<float> sqrt() const {
     return _mm256_sqrt_ps(values);
   }
-  __m128 extract(int part) const {
-    return _mm256_extractf128_ps(values, part);
-  }
   __m128 low() const {
-    return extract(0);
+    return _mm256_extractf128_ps(values, 0);
   }
   __m128 high() const {
-    return extract(1);
+    return _mm256_extractf128_ps(values, 1);
   }
 };
 
