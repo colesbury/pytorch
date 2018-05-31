@@ -5,7 +5,6 @@
 #include "ATen/Parallel.h"
 #include "ATen/cpu/vec256/vec256.h"
 #include "ATen/cpu/vec256/functional.h"
-#include "ATen/native/cpu/CapabilityDispatch.h"
 
 namespace at { namespace native {
 namespace {

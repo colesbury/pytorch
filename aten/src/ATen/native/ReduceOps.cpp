@@ -16,6 +16,9 @@
 namespace at {
 namespace native {
 
+DispatchStub<reduce_fn> sum_kernel;
+DispatchStub<reduce_fn> prod_kernel;
+
 static inline Tensor integer_upcast(const Tensor& self, optional<ScalarType> dtype) {
   ScalarType scalarType = self.type().scalarType();
   ScalarType upcast_scalarType = dtype.value_or(at::isIntegralType(scalarType) ? ScalarType::Long : scalarType);

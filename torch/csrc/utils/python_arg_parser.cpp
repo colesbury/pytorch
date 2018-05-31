@@ -30,6 +30,14 @@ static std::unordered_map<std::string, ParameterType> type_map = {
   {"std::string", ParameterType::STRING},
 };
 
+// TODO: remove this
+static bool should_allow_scalars_as_tensors(const std::string& name) {
+  static std::unordered_set<std::string> allowed = {
+    "add2"
+  };
+  return allowed.find(name) != allowed.end();
+}
+
 FunctionParameter::FunctionParameter(const std::string& fmt, bool keyword_only)
   : optional(false)
   , allow_none(false)
@@ -83,7 +91,7 @@ FunctionParameter::FunctionParameter(const std::string& fmt, bool keyword_only)
 bool FunctionParameter::check(PyObject* obj) {
   switch (type_) {
     case ParameterType::TENSOR: {
-      return THPVariable_Check(obj);
+      return THPVariable_Check(obj) || (allow_scalars_as_tensors && THPUtils_checkDouble(obj));
     }
     case ParameterType::SCALAR:
     case ParameterType::DOUBLE: {
@@ -229,6 +237,8 @@ FunctionSignature::FunctionSignature(const std::string& fmt)
   }
   name = fmt.substr(0, open_paren);
 
+  bool allow_scalars_as_tensors = should_allow_scalars_as_tensors(name);
+
   auto last_offset = open_paren + 1;
   auto next_offset = last_offset;
   bool keyword_only = false;
@@ -255,6 +265,7 @@ FunctionSignature::FunctionSignature(const std::string& fmt)
       keyword_only = true;
     } else {
       params.emplace_back(param_str, keyword_only);
+      params.back().allow_scalars_as_tensors = allow_scalars_as_tensors;
     }
   }
 

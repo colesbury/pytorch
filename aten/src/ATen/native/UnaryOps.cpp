@@ -149,5 +149,26 @@ IMPLEMENT_UNARY_OP_VEC(sqrt, std::sqrt)
 IMPLEMENT_UNARY_OP_FLOAT_CMATH(tan, std::tan)
 IMPLEMENT_UNARY_OP_VEC(tanh, std::tanh)
 IMPLEMENT_UNARY_OP_VEC(trunc, std::trunc)
+
+DispatchStub<unary_fn> absImpl;
+DispatchStub<unary_fn> acosImpl;
+DispatchStub<unary_fn> asinImpl;
+DispatchStub<unary_fn> atanImpl;
+DispatchStub<unary_fn> ceilImpl;
+DispatchStub<unary_fn> erfImpl;
+DispatchStub<unary_fn> expImpl;
+DispatchStub<unary_fn> expm1Impl;
+DispatchStub<unary_fn> fracImpl;
+DispatchStub<unary_fn> floorImpl;
+DispatchStub<unary_fn> logImpl;
+DispatchStub<unary_fn> log10Impl;
+DispatchStub<unary_fn> log1pImpl;
+DispatchStub<unary_fn> log2Impl;
+DispatchStub<unary_fn> roundImpl;
+DispatchStub<unary_fn> rsqrtImpl;
+DispatchStub<unary_fn> sqrtImpl;
+DispatchStub<unary_fn> tanhImpl;
+DispatchStub<unary_fn> truncImpl;
+
 }
 } // namespace at

@@ -143,6 +143,7 @@ struct FunctionParameter {
   bool optional;
   bool allow_none;
   bool keyword_only;
+  bool allow_scalars_as_tensors = false;
   int size;
   std::string name;
   // having this as a raw PyObject * will presumably leak it, but these are only held by static objects
@@ -169,17 +170,23 @@ inline PythonArgs PythonArgParser::parse(PyObject* args, PyObject* kwargs, Parse
 }
 
 inline at::Tensor PythonArgs::tensor(int i) {
-  if (!args[i]) return at::Tensor();
-  if (!THPVariable_Check(args[i])) {
+  PyObject* obj = args[i];
+  if (!obj) return at::Tensor();
+  if (!THPVariable_Check(obj)) {
+    if (THPUtils_checkLong(obj)) {
+      return autograd::make_variable(at::Scalar(THPUtils_unpackLong(obj)).toTensor());
+    } else if (THPUtils_checkDouble(obj)) {
+      return autograd::make_variable(at::Scalar(THPUtils_unpackDouble(obj)).toTensor());
+    }
     // NB: Are you here because you passed None to a Variable method,
     // and you expected an undefined tensor to be returned?   Don't add
     // a test for Py_None here; instead, you need to mark the argument
     // as *allowing none*; you can do this by writing 'Tensor?' instead
     // of 'Tensor' in the ATen metadata.
     throw TypeError("expected Tensor as argument %d, but got %s", i,
-        Py_TYPE(args[i])->tp_name);
+        Py_TYPE(obj)->tp_name);
   }
-  return reinterpret_cast<THPVariable*>(args[i])->cdata;
+  return reinterpret_cast<THPVariable*>(obj)->cdata;
 }
 
 inline at::Scalar PythonArgs::scalar(int i) {

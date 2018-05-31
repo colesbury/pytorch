@@ -83,6 +83,14 @@
 
 - func: allclose(Tensor self, Tensor other, double rtol=1e-5, double atol=1e-8, bool equal_nan=False) -> bool
 
+- func: add2(Tensor self, Tensor other, *, Scalar alpha=1) -> Tensor
+
+- func: add2_(Tensor self, Tensor other, *, Scalar alpha=1) -> Tensor
+  variants: method
+
+- func: add2_out(Tensor result, Tensor self, Tensor other, *, Scalar alpha=1) -> Tensor
+  variants: function
+
 - func: addmv(Tensor self, Tensor mat, Tensor vec, *, Scalar beta=1, Scalar alpha=1) -> Tensor
 
 - func: addmv_(Tensor self, Tensor mat, Tensor vec, *, Scalar beta=1, Scalar alpha=1) -> Tensor

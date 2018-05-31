@@ -84,6 +84,9 @@
 - name: add(Tensor self, Scalar other, *, Scalar alpha)
   self: grad
 
+- name: add2(Tensor self, Tensor other, *, Scalar alpha)
+  self: grad
+
 - name: add(Tensor self, Tensor other, *, Scalar alpha)
   self: grad
   other: maybe_multiply(grad, alpha)
