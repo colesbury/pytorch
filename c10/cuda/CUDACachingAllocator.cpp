@@ -4,6 +4,7 @@
 #include <c10/cuda/CUDAException.h>
 #include <c10/util/UniqueVoidPtr.h>
 
+#include <cstdlib>
 #include <cuda_runtime_api.h>
 #include <algorithm>
 #include <deque>
@@ -14,6 +15,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <iostream>
+#include <queue>
 
 namespace c10 {
 namespace cuda {
@@ -96,6 +99,14 @@ struct Block {
   Block(int device, cudaStream_t stream, size_t size, char* ptr=NULL) :
       device(device), stream(stream), stream_uses(), size(size), ptr(ptr),
       allocated(0), prev(NULL), next(NULL), event_count(0) { }
+};
+
+struct AllocationInfo {
+  size_t size = 0;
+  size_t used = 0;
+  std::vector<size_t> blocks;
+  std::vector<bool> allocated;
+  std::vector<int> stream_uses;
 };
 
 static bool BlockComparator(const Block* a, const Block* b)
@@ -227,6 +238,7 @@ struct THCCachingAllocator
           // Note that at this point cuda_malloc_retry has already returned all
           // possible "cached" memory to the driver. The only remaining "cached"
           // memory is split from a larger block that is partially in-use.
+          dumpUsage(device);
           AT_ERROR(
             "CUDA out of memory. Tried to allocate ", format_size(alloc_size),
             " (GPU ", device, "; ",
@@ -296,6 +308,74 @@ struct THCCachingAllocator
     std::lock_guard<std::mutex> lock(mutex);
     free_blocks(large_blocks, large_blocks.begin(), large_blocks.end());
     free_blocks(small_blocks, small_blocks.begin(), small_blocks.end());
+  }
+
+  void dumpUsage(int device) {
+    std::vector<Block*> all_blocks;
+    for (Block* block : large_blocks) {
+      if (block->device == device && !block->prev) {
+        all_blocks.push_back(block);
+      }
+    }
+    for (Block* block : small_blocks) {
+      if (block->device == device && !block->prev) {
+        all_blocks.push_back(block);
+      }
+    }
+    for (auto& p : allocated_blocks) {
+      Block* block = p.second;
+      if (block->device == device && !block->prev) {
+        all_blocks.push_back(block);
+      }
+    }
+
+    std::vector<AllocationInfo> allocations;
+    std::priority_queue<size_t> largest_free;
+    for (Block* block : all_blocks) {
+      allocations.emplace_back();
+      AllocationInfo& info = allocations.back();
+
+      Block* child = block;
+      while (child) {
+        info.size += child->size;
+        if (child->allocated) {
+          info.used += child->size;
+        } else {
+          largest_free.push(child->size);
+        }
+        info.blocks.push_back(child->size);
+        info.allocated.push_back(child->allocated);
+        info.stream_uses.push_back((int)child->stream_uses.size());
+        child = child->next;
+      }
+    }
+
+    std::sort(allocations.begin(), allocations.end(),
+      [](const AllocationInfo& a, const AllocationInfo& b) {
+          return a.size > b.size;
+      });
+
+    std::system("nvidia-smi");
+    std::ostringstream ss;
+    ss << "=== Device " << device << " ===\n";
+    for (auto& info : allocations) {
+      if (info.used == info.size) {
+        ss << "+ " << format_size(info.size) << "\n";
+      } else {
+        ss << "- " << format_size(info.size) << " [" << info.used << "/" << info.size << "]\n";
+        for (int i = 0; i < info.blocks.size(); i++) {
+          const char* token = info.allocated[i] ? "X" : info.stream_uses[i] ? "*" : "O";
+          ss << "  " << token << " " << format_size(info.blocks[i]) << "\n";
+        }
+      }
+    }
+
+    ss << "\n-- Largest free blocks --\n";
+    for (int i = 0; i < 10 && !largest_free.empty(); i++) {
+      ss << format_size(largest_free.top()) << "\n";
+      largest_free.pop();
+    }
+    std::cerr << ss.str();
   }
 
   void* getBaseAllocation(void* ptr, size_t* outSize)
@@ -409,6 +489,7 @@ struct THCCachingAllocator
     cudaError_t err = cudaMalloc(devPtr, size);
     if (err != cudaSuccess) {
       cudaGetLastError();  // reset the last CUDA error
+      std::cerr << "THCCachingAllocator: alloc failed, retrying\n";
       free_cached_blocks(device);
       err = cudaMalloc(devPtr, size);
       if (err != cudaSuccess) {
