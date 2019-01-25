@@ -52,9 +52,18 @@ namespace {
 
 using stream_set = std::unordered_set<cuda::CUDAStream>;
 
-const size_t kRoundSmall = 512;     // round up small allocs to 512 bytes
-const size_t kRoundLarge = 131072;  // round up large allocs to 128 KiB
-const size_t kSmallAlloc = 1048576; // largest "small" allocation is 1 MiB
+const size_t kRoundSmall = 512;       // round up small allocs to 512 bytes
+const size_t kRoundLarge = 2097152;   // round up large allocs to 2 MiB
+const size_t kSmallAlloc = 1048576;   // largest "small" allocation is 1 MiB
+const size_t kMediumAlloc = 10485760; // largest "medium" allocation is 10 MiB
+const size_t kSmallBlock = 2097152;   // "small" allocations are packed in 2 MiB blocks
+const size_t kMediumBlock = 52428800; // "medium" allocations are packed in 50 MiB blocks
+
+enum class Bucket {
+  SMALL,
+  MEDIUM,
+  LARGE
+};
 
 struct DeviceStats {
   uint64_t   amount_allocated;      // total amount allocated in bytes
@@ -86,19 +95,24 @@ struct DeviceStats {
 };
 
 struct Block {
+  Bucket        bucket;
   int           device;      // gpu
   cudaStream_t  stream;      // allocation stream
   stream_set    stream_uses; // streams on which the block was used
   size_t        size;        // block size in bytes
-  char*         ptr;         // memory address
+  void*         ptr;         // memory address
   bool          allocated;   // in-use flag
   Block*        prev;        // prev block if split from a larger allocation
   Block*        next;        // next block if split from a larger allocation
   int           event_count; // number of outstanding CUDA events
 
-  Block(int device, cudaStream_t stream, size_t size, char* ptr=NULL) :
-      device(device), stream(stream), stream_uses(), size(size), ptr(ptr),
-      allocated(0), prev(NULL), next(NULL), event_count(0) { }
+  Block(int device, cudaStream_t stream, size_t size) :
+      bucket(Bucket::SMALL), device(device), stream(stream), stream_uses(), size(size),
+      ptr(nullptr), allocated(0), prev(NULL), next(NULL), event_count(0) { }
+
+  Block(Bucket bucket, int device, cudaStream_t stream, size_t size, void* ptr=NULL) :
+      bucket(bucket), device(device), stream(stream), stream_uses(), size(size),
+      ptr(ptr), allocated(0), prev(NULL), next(NULL), event_count(0) { }
 };
 
 struct AllocationInfo {
@@ -158,20 +172,25 @@ struct THCCachingAllocator
   // lock around calls to cudaFree (to prevent deadlocks with NCCL)
   std::mutex cuda_free_mutex;
 
-  // cached blocks larger than 1 MB
+  // cached blocks larger than 10 MB
   FreeBlocks large_blocks;
+
+  // cached blocks >1 MB and <=10 MB
+  FreeBlocks medium_blocks;
 
   // cached blocks 1 MB or smaller
   FreeBlocks small_blocks;
 
   // allocated blocks by device pointer
   std::unordered_map<void*, Block*> allocated_blocks;
+  std::unordered_map<void*, std::pair<int, size_t>> allocated_sizes;
 
   // outstanding cuda events
   std::deque<std::pair<cudaEvent_t, Block*>> cuda_events;
 
   THCCachingAllocator() :
       large_blocks(BlockComparator),
+      medium_blocks(BlockComparator),
       small_blocks(BlockComparator) {}
 
   DeviceStats &get_stats_for_device(int device) {
@@ -194,12 +213,12 @@ struct THCCachingAllocator
     process_events();
 
     size = round_size(size);
-    bool small = size <= kSmallAlloc;
 
     DeviceStats &stats = get_stats_for_device(device);
 
     Block search_key(device, stream, size);
-    auto& free_blocks = small ? small_blocks : large_blocks;
+    Bucket bucket = get_bucket(size);
+    auto& free_blocks = get_free_blocks(bucket);
 
     Block* block = NULL;
     Block* remaining = NULL;
@@ -210,7 +229,7 @@ struct THCCachingAllocator
       free_blocks.erase(it);
     } else {
       void* ptr;
-      size_t alloc_size = small ? kSmallAlloc : size;
+      size_t alloc_size = get_allocation_size(size);
       cudaError_t err = cuda_malloc_retry(device, &ptr, alloc_size);
       if (err != cudaSuccess) {
         if (err == cudaErrorMemoryAllocation) {
@@ -251,13 +270,15 @@ struct THCCachingAllocator
         }
       }
       stats.increaseCached(alloc_size);
-      block = new Block(device, stream, alloc_size, (char*)ptr);
+      allocated_sizes[ptr] = std::make_pair(device, alloc_size);
+      block = new Block(bucket, device, stream, alloc_size, (char*)ptr);
     }
 
-    if (block->size - size >= (small ? kRoundSmall : kSmallAlloc + 1)) {
+    AT_ASSERT(block);
+    if (should_split(block, size)) {
       remaining = block;
 
-      block = new Block(device, stream, size, block->ptr);
+      block = new Block(bucket, device, stream, size, block->ptr);
       block->prev = remaining->prev;
       if (block->prev) {
         block->prev->next = block;
@@ -265,7 +286,7 @@ struct THCCachingAllocator
       block->next = remaining;
 
       remaining->prev = block;
-      remaining->ptr += size;
+      remaining->ptr = (char*)remaining->ptr + size;
       remaining->size -= size;
       free_blocks.insert(remaining);
     }
@@ -307,12 +328,18 @@ struct THCCachingAllocator
   {
     std::lock_guard<std::mutex> lock(mutex);
     free_blocks(large_blocks, large_blocks.begin(), large_blocks.end());
+    free_blocks(medium_blocks, medium_blocks.begin(), medium_blocks.end());
     free_blocks(small_blocks, small_blocks.begin(), small_blocks.end());
   }
 
   void dumpUsage(int device) {
     std::vector<Block*> all_blocks;
     for (Block* block : large_blocks) {
+      if (block->device == device && !block->prev) {
+        all_blocks.push_back(block);
+      }
+    }
+    for (Block* block : medium_blocks) {
       if (block->device == device && !block->prev) {
         all_blocks.push_back(block);
       }
@@ -355,9 +382,17 @@ struct THCCachingAllocator
           return a.size > b.size;
       });
 
+    size_t total_cuda_mallocd = 0;
+    for (auto& it : allocated_sizes) {
+      if (it.second.first == device) {
+        total_cuda_mallocd += it.second.second;
+      }
+    }
+
     std::system("nvidia-smi");
     std::ostringstream ss;
     ss << "=== Device " << device << " ===\n";
+    ss << "Total cudaMalloc size " << total_cuda_mallocd << " bytes\n";
     for (auto& info : allocations) {
       if (info.used == info.size) {
         ss << "+ " << format_size(info.size) << "\n";
@@ -418,6 +453,7 @@ struct THCCachingAllocator
   {
     std::lock_guard<std::mutex> lock(mutex);
     cacheInfoAux(large_blocks, dev_id, total, largest);
+    cacheInfoAux(medium_blocks, dev_id, total, largest);
     cacheInfoAux(small_blocks, dev_id, total, largest);
   }
 
@@ -440,8 +476,7 @@ struct THCCachingAllocator
   void free_block(Block* block)
   {
     AT_ASSERT(!block->allocated && block->event_count == 0);
-    bool small = block->size <= kSmallAlloc;
-    auto& free_blocks = small ? small_blocks : large_blocks;
+    auto& free_blocks = get_free_blocks(block->bucket);
     try_merge_blocks(block, block->prev, free_blocks);
     try_merge_blocks(block, block->next, free_blocks);
     free_blocks.insert(block);
@@ -470,16 +505,58 @@ struct THCCachingAllocator
     delete src;
   }
 
-  size_t round_size(size_t size)
-  {
+  Bucket get_bucket(size_t size) {
+    if (size <= kSmallAlloc) {
+      return Bucket::SMALL;
+    } else if (size <= kMediumAlloc) {
+      return Bucket::MEDIUM;
+    } else {
+      return Bucket::LARGE;
+    }
+  }
+
+  FreeBlocks& get_free_blocks(Bucket bucket) {
+    if (bucket == Bucket::SMALL) {
+      return small_blocks;
+    } else if (bucket == Bucket::MEDIUM) {
+      return medium_blocks;
+    } else if (bucket == Bucket::LARGE) {
+      return large_blocks;
+    } else {
+      AT_ASSERT(false);
+    }
+  }
+
+  bool should_split(Block* block, size_t size) {
+    size_t remaining = block->size - size;
+    if (block->bucket == Bucket::SMALL) {
+      return remaining >= kRoundSmall;
+    } else if (block->bucket == Bucket::MEDIUM) {
+      return remaining > kSmallAlloc;
+    } else {
+      return remaining > kMediumAlloc;
+    }
+  }
+
+  size_t round_size(size_t size) {
     if (size < kRoundSmall) {
       size = kRoundSmall;
-    } else if (size < kSmallAlloc) {
+    } else if (size < kMediumAlloc) {
       size += kRoundSmall - 1 - (size - 1) % kRoundSmall;
     } else {
       size += kRoundLarge - 1 - (size - 1) % kRoundLarge;
     }
     return size;
+  }
+
+  size_t get_allocation_size(size_t size) {
+    if (size <= kSmallAlloc) {
+      return kSmallBlock;
+    } else if (size <= kMediumAlloc) {
+      return kMediumBlock;
+    } else {
+      return size;
+    }
   }
 
   cudaError_t cuda_malloc_retry(int device, void** devPtr, size_t size)
@@ -510,6 +587,10 @@ struct THCCachingAllocator
         large_blocks.lower_bound(&lower_bound),
         large_blocks.lower_bound(&upper_bound));
     free_blocks(
+        medium_blocks,
+        medium_blocks.lower_bound(&lower_bound),
+        medium_blocks.lower_bound(&upper_bound));
+    free_blocks(
         small_blocks,
         small_blocks.lower_bound(&lower_bound),
         small_blocks.lower_bound(&upper_bound));
@@ -523,6 +604,9 @@ struct THCCachingAllocator
       Block* block = *it;
       if (!block->prev && !block->next) {
         C10_CUDA_CHECK(cudaFree((void*)block->ptr));
+        AT_ASSERT(allocated_sizes.find(block->ptr) != allocated_sizes.end());
+        AT_ASSERT(allocated_sizes[block->ptr].second == block->size);
+        allocated_sizes.erase(block->ptr);
         get_stats_for_device(block->device).decreaseCached(block->size);
         auto cur = it;
         ++it;
