@@ -22,10 +22,12 @@ configure_file(
 set(C10_CUDA_SRCS
     CUDAStream.cpp
     CUDACachingAllocator.cpp
+    BFCAllocator.cpp
     impl/CUDAGuardImpl.cpp
     impl/CUDATest.cpp
 )
 set(C10_CUDA_HEADERS
+    BFCAllocator.h
     CUDAException.h
     CUDAGuard.h
     CUDAMacros.h

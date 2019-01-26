@@ -17,6 +17,7 @@
 #include <vector>
 #include <iostream>
 #include <queue>
+#include <c10/cuda/BFCAllocator.h>
 
 namespace c10 {
 namespace cuda {
@@ -662,9 +663,96 @@ struct CudaCachingAllocator : public Allocator {
 
 CudaCachingAllocator device_allocator;
 
+using namespace tensorflow;
+
+struct GPUSubAllocator : public SubAllocator {
+  GPUSubAllocator(int device) : SubAllocator({}, {}), device(device) {
+  }
+
+  void* Alloc(size_t alignment, size_t num_bytes) override {
+    CUDAGuard guard(device);
+    void* p = nullptr;
+    cudaError_t err = cudaMalloc(&p, num_bytes);
+    // std::cerr << "cudaMalloc " << p  << " (" << num_bytes << ")\n";
+    if (err != cudaSuccess) {
+      if (err == cudaErrorMemoryAllocation) {
+        cudaGetLastError();
+        return nullptr;
+      }
+      C10_CUDA_CHECK(err);
+    }
+    return p;
+  }
+
+  void Free(void* ptr, size_t num_bytes) override {
+    C10_CUDA_CHECK(cudaFree(ptr));
+  }
+
+  int device;
+};
+
+void raw_delete_bfc(void* ptr);
+
+struct BFCCachingAllocator : public Allocator {
+  mutable std::mutex mutex;
+  mutable std::vector<BFCAllocator*> allocators;
+  mutable std::unordered_map<void*, int> device_map;
+
+  DataPtr allocate(size_t size) const override {
+    std::lock_guard<std::mutex> lk(mutex);
+    int device;
+    C10_CUDA_CHECK(cudaGetDevice(&device));
+    if (device >= allocators.size()) {
+      allocators.resize(device + 1);
+    }
+    if (!allocators[device]) {
+      size_t free_mem, total_mem;
+      C10_CUDA_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
+      allocators[device] = new BFCAllocator(new GPUSubAllocator(device), total_mem, true, "BFC");
+    }
+    BFCAllocator* allocator = allocators[device];
+
+    void* r = nullptr;
+    if (size != 0) {
+      r = allocator->AllocateRaw(256, size);
+      if (!r) {
+        size_t device_free, device_total;
+        C10_CUDA_CHECK(cudaMemGetInfo(&device_free, &device_total));
+        AT_ERROR("CUDA out of memory. Tried to allocate ", format_size(size),
+        " (GPU ", device, "; ",
+        format_size(device_total), " total capacity; ",
+        /*format_size(stats.amount_allocated),*/ "??? already allocated; ",
+        format_size(device_free), " free; ",
+        /*format_size(stats.amount_cached - stats.amount_allocated),*/ "??? cached)");
+      }
+      device_map[r] = device;
+    }
+    return {r, r, &raw_delete_bfc, Device(DeviceType::CUDA, device)};
+  }
+  void Delete(void* ptr) {
+    std::lock_guard<std::mutex> lk(mutex);
+    auto it = device_map.find(ptr);
+    AT_ASSERT(it != device_map.end());
+    int device = it->second;
+    CUDAGuard guard(device);
+    allocators[device]->DeallocateRaw(ptr);
+    device_map.erase(it);
+  }
+  DeleterFnPtr raw_deleter() const override {
+    return &raw_delete_bfc;
+  }
+};
+
+BFCCachingAllocator bfc;
+
+void raw_delete_bfc(void* ptr) {
+  bfc.Delete(ptr);
+}
+
 Allocator* get(void)
 {
   return &device_allocator;
+  // return &bfc;
 }
 
 void emptyCache(void) {
