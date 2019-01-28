@@ -248,6 +248,7 @@ struct THCCachingAllocator
           // Note that at this point cuda_malloc_retry has already returned all
           // possible "cached" memory to the driver. The only remaining "cached"
           // memory is split from a larger block that is partially in-use.
+          std::cerr << "Tried to allocate " << format_size(alloc_size) << "\n";
           dumpUsage(device);
           AT_ERROR(
             "CUDA out of memory. Tried to allocate ", format_size(alloc_size),
@@ -751,8 +752,18 @@ void raw_delete_bfc(void* ptr) {
 
 Allocator* get(void)
 {
-  return &device_allocator;
-  // return &bfc;
+  static Allocator* allocator = nullptr;
+  if (!allocator) {
+    const char* e = std::getenv("AT_ALLOCATOR");
+    if (e && std::string(e) == "bfc") {
+      std::cerr << "Using BFC allocator\n";
+      allocator = &bfc;
+    } else {
+      std::cerr << "Using THC allocator\n";
+      allocator = &device_allocator;
+    }
+  }
+  return allocator;
 }
 
 void emptyCache(void) {
