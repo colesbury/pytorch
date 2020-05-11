@@ -94,5 +94,15 @@ PyObject *returned_structseq_repr(PyStructSequence *obj) {
     return PyUnicode_FromString(ss.str().c_str());
 }
 
+
+PyTypeObject *init_struct_seq(PyTypeObject *tp, PyStructSequence_Desc *desc)
+{
+    if (PyStructSequence_InitType2(tp, desc) < 0) {
+        return nullptr;
+    }
+    tp->tp_repr = (reprfunc)returned_structseq_repr;
+    return tp;
+}
+
 }
 }

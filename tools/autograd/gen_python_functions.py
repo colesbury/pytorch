@@ -153,13 +153,9 @@ static PyStructSequence_Desc desc${namedtuple_type_index} = {
   "torch.return_types.${name}", nullptr,
   fields${namedtuple_type_index}, ${namedtuple_size}
 };
-static PyTypeObject type${namedtuple_type_index};
-static bool namedtuple_type_initialized${namedtuple_type_index} = false;
-if (!namedtuple_type_initialized${namedtuple_type_index}) {
-  PyStructSequence_InitType(&type${namedtuple_type_index}, &desc${namedtuple_type_index});
-  type${namedtuple_type_index}.tp_repr = (reprfunc)torch::utils::returned_structseq_repr;
-  namedtuple_type_initialized${namedtuple_type_index} = true;
-}
+static PyTypeObject typeobj${namedtuple_type_index};
+static PyTypeObject *type${namedtuple_type_index} = torch::utils::init_struct_seq(&typeobj${namedtuple_type_index}, &desc${namedtuple_type_index});
+if (!type${namedtuple_type_index}) return nullptr;
 """)
 
 UNPACK_SELF = "auto& self = reinterpret_cast<THPVariable*>(self_)->cdata;"
@@ -712,7 +708,7 @@ def create_python_bindings(python_functions, has_self, is_module=False):
             else:
                 declaration['namedtuple_fields'] += '{"' + x['field_name'] + '", ""}, '
         declaration['namedtuple_size'] = len(returns)
-        declaration['namedtuple_return_type'] = '&type{}, '.format(next_index)
+        declaration['namedtuple_return_type'] = 'type{}, '.format(next_index)
         return PY_RETURN_NAMEDTUPLE_DEF.substitute(declaration), next_index + 1
 
     def process_function(name, declarations):

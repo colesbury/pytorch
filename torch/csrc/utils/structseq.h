@@ -8,6 +8,6 @@ namespace torch { namespace utils {
 PyObject *structseq_slice(PyStructSequence *obj, Py_ssize_t low, Py_ssize_t high);
 #endif
 
-PyObject *returned_structseq_repr(PyStructSequence *obj);
+PyTypeObject *init_struct_seq(PyTypeObject *tp, PyStructSequence_Desc *desc);
 
 }}
