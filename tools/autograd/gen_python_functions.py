@@ -727,14 +727,11 @@ static PyStructSequence_Field ${fieldsname}[] = { ${fields,} {nullptr} };
 """)
 
 PY_NAMEDTUPLE_TYPEDEF = CodeTemplate("""\
-static PyTypeObject ${typename};
-static bool ${typename}_initialized = false;
-if (!${typename}_initialized) {
-  ${typename}_initialized = true;
-  static PyStructSequence_Desc desc = { "torch.return_types.${name}", nullptr, ${fieldsname}, ${size} };
-  PyStructSequence_InitType(&${typename}, &desc);
-  ${typename}.tp_repr = (reprfunc)torch::utils::returned_structseq_repr;
-}
+static PyStructSequence_Desc ${typename}_desc = { "torch.return_types.${name}", nullptr, ${fieldsname}, ${size} };
+static PyTypeObject ${typename}_obj;
+static PyTypeObject *${typename} = torch::utils::init_struct_seq(
+  &${typename}_obj,
+  &${typename}_desc);
 """)
 
 
@@ -780,7 +777,7 @@ def emit_namedtuple_typedefs(declarations):
             typenames[key] = typename
             typedefs.append(typedef)
 
-        decl['namedtuple_typeref'] = '&{}, '.format(typename)
+        decl['namedtuple_typeref'] = '{}, '.format(typename)
 
     return flddefs + typedefs
 
