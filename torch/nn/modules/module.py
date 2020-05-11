@@ -526,10 +526,7 @@ class Module(object):
                 if not isinstance(result, tuple):
                     result = (result,)
                 input = result
-        if torch._C._get_tracing_state():
-            result = self._slow_forward(*input, **kwargs)
-        else:
-            result = self.forward(*input, **kwargs)
+        result = self.forward(*input, **kwargs)
         for hook in self._forward_hooks.values():
             hook_result = hook(self, input, result)
             if hook_result is not None:
