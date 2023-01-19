@@ -1814,7 +1814,7 @@ void THPVariable_subclass_dealloc(PyObject* self) {
   if (type->tp_del) {
     PyObject_GC_Track(self);
     type->tp_del(self);
-    if (self->ob_refcnt > 0) {
+    if (Py_REFCNT(self) > 0) {
       /* Resurrected */
       return;
     }
@@ -1827,11 +1827,15 @@ void THPVariable_subclass_dealloc(PyObject* self) {
        finalizers since they might rely on part of the object
        being finalized that has already been destroyed. */
     if (type->tp_weaklistoffset) {
+#ifdef Py_NOGIL
+      _PyObject_ClearWeakRefsFromDealloc(self);
+#else
       /* Modeled after GET_WEAKREFS_LISTPTR() */
       PyWeakReference** list =
           (PyWeakReference**)PyObject_GET_WEAKREFS_LISTPTR(self);
       while (*list)
         _PyWeakref_ClearRef(*list);
+#endif
     }
   }
 
