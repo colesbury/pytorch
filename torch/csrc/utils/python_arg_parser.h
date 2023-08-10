@@ -123,37 +123,37 @@ private:
   bool traceable;
 };
 
-struct PYBIND11_EXPORT FunctionSignature {
+struct FunctionSignature {
   explicit FunctionSignature(const std::string& fmt, int index);
 
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
-  bool parse(PyObject* self, PyObject* args, PyObject* kwargs, PyObject* dst[], bool raise_exception);
+  bool parse(PyObject* self, PyObject* args, PyObject* kwargs, PyObject* dst[], std::vector<py::handle>& overloaded_args, bool raise_exception);
 
   std::string toString() const;
 
   std::string name;
   std::vector<FunctionParameter> params;
-  std::vector<py::handle> overloaded_args;
   ssize_t min_args;
   ssize_t max_args;
   ssize_t max_pos_args;
   int index;
   bool hidden;
   bool deprecated;
-  bool disable_torch_function;
 };
 
-struct PythonArgs {
-  PythonArgs(bool traceable, const FunctionSignature& signature, PyObject** args)
+struct PYBIND11_EXPORT PythonArgs {
+  PythonArgs(bool traceable, const FunctionSignature& signature, PyObject** args, std::vector<py::handle> overloaded_args)
     : idx(signature.index)
     , traceable(traceable)
     , signature(signature)
-    , args(args) {}
+    , args(args)
+    , overloaded_args(std::move(overloaded_args)) {}
 
   int idx;
   bool traceable;
   const FunctionSignature& signature;
   PyObject** args;
+  std::vector<py::handle> overloaded_args;
 
   inline bool has_torch_function();
   inline std::string get_func_name();
@@ -267,7 +267,7 @@ inline PythonArgs PythonArgParser::parse(PyObject* self, ParsedArgs<0>& dst) {
 }
 
 inline bool PythonArgs::has_torch_function(){
-  return !this->signature.overloaded_args.empty();
+  return !overloaded_args.empty();
 }
 
 inline std::string PythonArgs::get_func_name(){
