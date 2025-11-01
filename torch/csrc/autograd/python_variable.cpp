@@ -206,6 +206,12 @@ PyObject* THPVariableClass = nullptr;
 
 PyObject* ParameterClass = nullptr;
 
+static PyObject* THPVariable_New(PyTypeObject* type, at::TensorBase&& _var);
+
+static PyObject* THPVariable_NewFresh(
+    PyTypeObject* type,
+    at::TensorBase&& _var);
+
 static PyObject* THPVariable_NewWithVar(
     PyTypeObject* type,
     const at::TensorBase& _var,
@@ -260,35 +266,36 @@ PyObject* THPVariable_Wrap(const at::TensorBase& var) {
     Py_RETURN_NONE;
   }
 
-  if (c10::impl::HermeticPyObjectTLS::get_state()) {
-    return THPVariable_NewWithVar((PyTypeObject*)THPVariableClass, var);
+  c10::TensorImpl* tensor_impl = var.unsafeGetTensorImpl();
+  c10::impl::PyObjectSlot* pyobj_slot = tensor_impl->pyobj_slot();
+
+  PyObject* obj = pyobj_slot->load_pyobj();
+  if (obj) {
+    return Py_NewRef(obj);
   }
 
-  std::optional<PyObject*> mb_obj =
-      var.unsafeGetTensorImpl()->pyobj_slot()->check_pyobj(
-          /*ignore_hermetic_tls=*/false);
-  if (mb_obj.has_value()) {
-    auto obj = *mb_obj;
-    if (obj) {
-      Py_INCREF(obj);
-      return obj;
+  PyTypeObject* type = reinterpret_cast<PyTypeObject*>(THPVariableClass);
+  if (C10_UNLIKELY(var.device().type() == c10::kXLA)) {
+    if (auto clazz = getPythonTensorClass(var.device())) {
+      type = reinterpret_cast<PyTypeObject*>(clazz);
     }
-    // TODO: a better invariant is that if we tagged, we MUST have a valid
-    // PyObject.  That's PyObject preservation
-    // (https://github.com/pytorch/pytorch/pull/56017).  Prior to this PR
-    // being a thing, the PyObject field will get cleared when all references
-    // to the Python object are removed.
   }
 
-  if (C10_LIKELY(var.device().type() != c10::kXLA)) {
-    return THPVariable_NewWithVar((PyTypeObject*)THPVariableClass, var);
+  obj = THPVariable_New(type, Tensor(var));
+  PyObject* wrapper =
+      pyobj_slot->init_once_atomic(c10::impl::getGlobalPyInterpreter(), obj);
+  if (wrapper != obj) {
+    // Another thread beat us to it
+    Py_DECREF(obj);
+    return Py_NewRef(wrapper);
   }
 
-  if (auto clazz = getPythonTensorClass(var.device())) {
-    return THPVariable_NewWithVar((PyTypeObject*)clazz, var);
+  Py_INCREF(obj);
+  if (!tensor_impl->init_pyobj(obj)) {
+    Py_DECREF(obj);
   }
 
-  return THPVariable_NewWithVar((PyTypeObject*)THPVariableClass, var);
+  return obj;
 }
 
 static PyObject* THPVariable_pynew(
@@ -459,7 +466,7 @@ static PyObject* THPVariable_as_subclass(
   // stack
   torch_dispatch_mode::StashTorchDispatchStackGuard td_g;
   c10::impl::DisablePythonDispatcher dpd_g;
-  return THPVariable_NewWithVar((PyTypeObject*)cls, self.alias());
+  return THPVariable_NewFresh((PyTypeObject*)cls, self.alias());
   END_HANDLE_TH_ERRORS
 }
 
@@ -511,7 +518,7 @@ static PyObject* THPVariable_make_subclass(
     data.unsafeGetTensorImpl()->_change_backend_component_keys(r.device(6));
   }
 
-  return THPVariable_NewWithVar((PyTypeObject*)cls, data);
+  return THPVariable_NewFresh((PyTypeObject*)cls, std::move(data));
   END_HANDLE_TH_ERRORS
 }
 
@@ -650,6 +657,8 @@ static PyObject* THPVariable_make_wrapper_subclass(
       /*storage_size=*/r.toSymIntOptional(14),
       r.toDispatchKeySetOptional(13));
 
+  tensor.unsafeGetTensorImpl()->set_python_dispatch(true);
+
   const auto sizes_strides_policy = r.stringViewOptional(10);
   if (sizes_strides_policy.has_value()) {
     tensor.unsafeGetTensorImpl()->set_python_custom_sizes_strides(
@@ -665,13 +674,7 @@ static PyObject* THPVariable_make_wrapper_subclass(
     tensor.unsafeGetTensorImpl()->set_python_custom_layout(true);
   }
 
-  return THPVariable_NewWithVar(
-      (PyTypeObject*)cls,
-      tensor,
-      // false is the default
-      /*allow_preexisting_pyobj=*/false,
-      // we checked __torch_dispatch__ above; avoid checking again.
-      /*has_torch_dispatch_if_known=*/true);
+  return THPVariable_NewFresh((PyTypeObject*)cls, std::move(tensor));
   END_HANDLE_TH_ERRORS
 }
 
@@ -851,14 +854,9 @@ static PyObject* THPVariable_dtensor_new(
       /*storage_size=*/std::nullopt,
       extra_dispatch_keys);
   tensor.set_requires_grad(requires_grad);
-  py::object py_tensor =
-      py::reinterpret_steal<py::object>(THPVariable_NewWithVar(
-          (PyTypeObject*)cls,
-          tensor,
-          // false is the default
-          /*allow_preexisting_pyobj=*/false,
-          // we know DTensor has __torch_dispatch__; avoid checking again.
-          /*has_torch_dispatch_if_known=*/true));
+  tensor.unsafeGetTensorImpl()->set_python_dispatch(true);
+  py::object py_tensor = py::reinterpret_steal<py::object>(
+      THPVariable_NewFresh((PyTypeObject*)cls, std::move(tensor)));
   py_tensor.attr(dtensor_interned_strings._spec) = spec;
   py_tensor.attr(dtensor_interned_strings._local_tensor) = local_tensor;
   return py_tensor.release().ptr();
@@ -2118,6 +2116,50 @@ PyObject* THPVariable_pynew(
   // NB: base_tensor_ctor can call into dispatched ATen functions (e.g.,
   // alias(), lift_fresh()) which can return Tensor subclasses.  We allow
   // these to be passed on directly.
+
+  // c10::TensorImpl* tensor_impl = var.unsafeGetTensorImpl();
+  // c10::impl::PyObjectSlot* pyobj_slot = tensor_impl->pyobj_slot();
+
+  // PyObject* obj = pyobj_slot->load_pyobj();
+  // if (obj) {
+  //     TORCH_CHECK(
+  //       Py_TYPE(obj) == type || PyType_IsSubtype(Py_TYPE(obj), type),
+  //       "Creating a new Tensor subclass ",
+  //       type->tp_name,
+  //       " but the raw Tensor object is already associated to a python object ",
+  //       "of type ",
+  //       mb_obj.value()->ob_type->tp_name,
+  //       " which is not a subclass of the "
+  //       "requested type");
+
+
+  //   return Py_NewRef(obj);
+  // }
+
+  // PyTypeObject* type = reinterpret_cast<PyTypeObject*>(THPVariableClass);
+  // if (C10_UNLIKELY(var.device().type() == c10::kXLA)) {
+  //   if (auto clazz = getPythonTensorClass(var.device())) {
+  //     type = reinterpret_cast<PyTypeObject*>(clazz);
+  //   }
+  // }
+
+  // obj = THPVariable_New(type, Tensor(var));
+  // PyObject* wrapper =
+  //     pyobj_slot->init_once_atomic(c10::impl::getGlobalPyInterpreter(), obj);
+  // if (wrapper != obj) {
+  //   // Another thread beat us to it
+  //   Py_DECREF(obj);
+  //   return Py_NewRef(wrapper);
+  // }
+
+  // Py_INCREF(obj);
+  // if (!tensor_impl->init_pyobj(obj)) {
+  //   Py_DECREF(obj);
+  // }
+
+  // return obj;
+
+
   return THPVariable_NewWithVar(
       type,
       tensor,
@@ -2201,6 +2243,36 @@ static void THPVariable_dealloc(PyObject* self) {
   Py_TYPE(self)->tp_free(self);
 }
 
+static PyObject* THPVariable_New(PyTypeObject* type, at::TensorBase&& tensor) {
+  PyObject* obj = type->tp_alloc(type, 0);
+  TORCH_CHECK(obj, "Failed to allocate a ", type->tp_name, " object");
+  auto v = reinterpret_cast<THPVariable*>(obj);
+  new (&v->cdata) Tensor(std::move(tensor));
+  return obj;
+}
+
+static PyObject* THPVariable_NewFresh(
+    PyTypeObject* type,
+    at::TensorBase&& tensor) {
+  TORCH_CHECK(
+      type == &THPVariableType || type == (PyTypeObject*)THPVariableClass ||
+          PyType_IsSubtype(type, &THPVariableType),
+      "Creating a Tensor subclass from a class ",
+      "that does not inherit from Tensor is not possible. Make sure your class inherits from Tensor.");
+
+  TORCH_INTERNAL_ASSERT(tensor.use_count() == 1);
+  c10::TensorImpl* tensor_impl = tensor.unsafeGetTensorImpl();
+  PyObject* obj = THPVariable_New(type, std::move(tensor));
+  TORCH_INTERNAL_ASSERT(tensor_impl->pyobj_slot()->load_pyobj() == nullptr);
+  tensor_impl->pyobj_slot()->init_non_atomic(
+      c10::impl::getGlobalPyInterpreter(), obj);
+  tensor_impl->init_pyobj(obj);
+  if (check_has_torch_dispatch(obj)) { // Boo!
+    tensor_impl->set_python_dispatch(true);
+  }
+  return obj;
+}
+
 // Creates a new Python object for a Variable.
 static PyObject* THPVariable_NewWithVar(
     PyTypeObject* type,
@@ -2260,9 +2332,11 @@ static PyObject* THPVariable_NewWithVar(
     // relation here.  In the common case the requested type is Tensor and
     // this always succeeds.
     PyObject* obj = *mb_obj;
-    // Check if it's OK to just directly return the Python object without
-    // allocating a new variable.  We just check that the existing Python
-    // object is a subclass of the requested type.
+    // std::cerr << "THPVariable_NewWithVar existing type=" << type->tp_name <<
+    // " obj=" << (void*)obj << std::endl; Check if it's OK to just directly
+    // return the Python object without allocating a new variable.  We just
+    // check that the existing Python object is a subclass of the requested
+    // type.
     PyTypeObject* obj_type = Py_TYPE(obj);
     TORCH_CHECK(
         obj_type == type || PyType_IsSubtype(obj_type, type),

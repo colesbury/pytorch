@@ -277,7 +277,7 @@ void TensorImpl::release_resources() {
   if (storage_) {
     storage_ = {};
   }
-  pyobj_slot_.maybe_destroy_pyobj();
+  // pyobj_slot_.clear()
 }
 
 #ifndef C10_DISABLE_TENSORIMPL_EXTENSIBILITY
