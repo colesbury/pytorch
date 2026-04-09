@@ -104,9 +104,7 @@ void Node::release_resources() {
   anomaly_metadata_.reset();
 }
 
-Node::~Node() {
-  releaseGraphIteratively(this);
-}
+Node::~Node() = default;
 
 at::Tensor TypeAndSize::zeros() {
   return at::zeros_symint(sym_sizes, options);
