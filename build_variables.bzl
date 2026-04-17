@@ -910,6 +910,7 @@ libtorch_python_core_sources = [
     "torch/csrc/QScheme.cpp",
     "torch/csrc/Module.cpp",
     "torch/csrc/PyInterpreter.cpp",
+    "torch/csrc/utils/gil_utils.c",
     "torch/csrc/PyInterpreterHooks.cpp",
     "torch/csrc/python_dimname.cpp",
     "torch/csrc/Size.cpp",

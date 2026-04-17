@@ -8,6 +8,257 @@
 
 #include <string>
 
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <unistd.h>
+
+#include <dlfcn.h>
+#include <execinfo.h>
+
+#include <torch/csrc/utils/gil_utils.h>
+
+static bool gil_stats_enabled() {
+  static bool enabled = std::getenv("GIL_STATS") != nullptr;
+  return enabled;
+}
+
+struct GILStats {
+  std::atomic<uint64_t> total_ns{0};
+  std::atomic<uint64_t> max_ns{0};
+  std::atomic<uint64_t> count{0};
+
+  void record(uint64_t ns) {
+    total_ns.fetch_add(ns, std::memory_order_relaxed);
+    count.fetch_add(1, std::memory_order_relaxed);
+    auto prev = max_ns.load(std::memory_order_relaxed);
+    while (ns > prev && !max_ns.compare_exchange_weak(
+                            prev, ns, std::memory_order_relaxed)) {
+    }
+  }
+};
+
+static GILStats gil_incref;
+static GILStats gil_try_incref;
+static GILStats gil_decref;
+static GILStats gil_refcnt;
+static std::atomic<uint64_t> gil_total_count{0};
+
+static uint64_t gil_print_period() {
+  static uint64_t period = []() -> uint64_t {
+    if (auto* env = std::getenv("GIL_STATS_PERIOD")) {
+      return std::strtoull(env, nullptr, 10);
+    }
+    return 100000;
+  }();
+  return period;
+}
+
+static uint64_t gil_bt_threshold_ns() {
+  static uint64_t threshold = []() -> uint64_t {
+    if (auto* env = std::getenv("GIL_BT_THRESHOLD_US")) {
+      return std::strtoull(env, nullptr, 10) * 1000;
+    }
+    return 1000000;
+  }();
+  return threshold;
+}
+
+static bool gil_holder_bt_enabled() {
+  static bool enabled = std::getenv("GIL_HOLDER_BT") != nullptr;
+  return enabled;
+}
+
+static PyThreadState* gil_get_holder() {
+  if (!gil_holder_bt_enabled())
+    return nullptr;
+  return torch_gil_last_holder();
+}
+
+static void gil_dump_holder(
+    std::string& buf,
+    PyThreadState* holder) {
+  char tmp[256];
+  if (!holder) {
+    buf += "  GIL holder: unknown\n";
+    return;
+  }
+  PyThreadState* self = PyThreadState_GetUnchecked();
+  if (holder == self) {
+    snprintf(
+        tmp,
+        sizeof(tmp),
+        "  GIL holder: self (tid=%lu)\n",
+        holder->thread_id);
+    buf += tmp;
+    return;
+  }
+  snprintf(
+      tmp,
+      sizeof(tmp),
+      "  GIL holder: tid=%lu native_tid=%lu\n",
+      holder->thread_id,
+      holder->native_thread_id);
+  buf += tmp;
+
+  PyObject* frames = _PyThread_CurrentFrames();
+  if (!frames)
+    return;
+  PyObject* holder_tid = PyLong_FromUnsignedLong(holder->thread_id);
+  if (!holder_tid) {
+    Py_DECREF(frames);
+    return;
+  }
+  PyObject* frame_obj = PyDict_GetItem(frames, holder_tid);
+  if (frame_obj && PyFrame_Check(frame_obj)) {
+    auto* frame = (PyFrameObject*)frame_obj;
+    int depth = 0;
+    while (frame && depth < 10) {
+      PyCodeObject* code = PyFrame_GetCode(frame);
+      if (code) {
+        int line = PyFrame_GetLineNumber(frame);
+        const char* filename =
+            PyUnicode_AsUTF8(code->co_filename);
+        PyObject* name =
+            code->co_qualname ? code->co_qualname : code->co_name;
+        const char* name_str = name ? PyUnicode_AsUTF8(name) : "??";
+        snprintf(
+            tmp, sizeof(tmp), "  GIL holder Py #%d %s:%d in %s\n",
+            depth, filename ? filename : "??", line, name_str);
+        buf += tmp;
+        Py_DECREF(code);
+      }
+      PyFrameObject* prev = frame;
+      frame = PyFrame_GetBack(frame);
+      Py_DECREF(prev);
+      ++depth;
+    }
+    if (frame) {
+      Py_DECREF(frame);
+    }
+  }
+  Py_DECREF(holder_tid);
+  Py_DECREF(frames);
+}
+
+static void gil_dump_backtrace(
+    std::string& buf,
+    uint64_t ns,
+    uint64_t cur_max,
+    PyThreadState* holder) {
+  char tmp[256];
+  snprintf(
+      tmp,
+      sizeof(tmp),
+      "[GIL refcount bt] pid=%d, wait=%.3f ms (max=%.3f ms):\n",
+      (int)getpid(),
+      ns / 1e6,
+      cur_max / 1e6);
+  buf += tmp;
+
+  gil_dump_holder(buf, holder);
+
+  constexpr int kMaxFrames = 12;
+  void* frames[kMaxFrames];
+  int nframes = backtrace(frames, kMaxFrames);
+  int displayed = 0;
+  for (int i = 2; i < nframes && displayed < 10; ++i, ++displayed) {
+    Dl_info info;
+    if (dladdr(frames[i], &info) && info.dli_sname) {
+      snprintf(
+          tmp,
+          sizeof(tmp),
+          "  C++ #%d %s + 0x%lx [%s]\n",
+          displayed,
+          info.dli_sname,
+          (unsigned long)((char*)frames[i] - (char*)info.dli_saddr),
+          info.dli_fname ? info.dli_fname : "??");
+    } else {
+      snprintf(tmp, sizeof(tmp), "  C++ #%d %p\n", displayed, frames[i]);
+    }
+    buf += tmp;
+  }
+
+  if (PyGILState_Check()) {
+    PyFrameObject* frame = PyEval_GetFrame();
+    int py_depth = 0;
+    while (frame && py_depth < 10) {
+      PyCodeObject* code = PyFrame_GetCode(frame);
+      if (code) {
+        int line = PyFrame_GetLineNumber(frame);
+        PyObject* filename = code->co_filename;
+        PyObject* name = code->co_qualname ? code->co_qualname : code->co_name;
+        const char* filename_str =
+            filename ? PyUnicode_AsUTF8(filename) : "??";
+        const char* name_str = name ? PyUnicode_AsUTF8(name) : "??";
+        snprintf(
+            tmp, sizeof(tmp), "  Py  #%d %s:%d in %s\n",
+            py_depth, filename_str, line, name_str);
+        buf += tmp;
+        Py_DECREF(code);
+      }
+      PyFrameObject* prev = frame;
+      frame = PyFrame_GetBack(frame);
+      if (prev != PyEval_GetFrame()) {
+        Py_DECREF(prev);
+      }
+      ++py_depth;
+    }
+    if (frame) {
+      Py_DECREF(frame);
+    }
+  }
+}
+
+static void gil_record(GILStats& stats, uint64_t ns, PyThreadState* holder) {
+  stats.record(ns);
+  auto cnt = gil_total_count.fetch_add(1, std::memory_order_relaxed) + 1;
+
+  auto cur_max = stats.max_ns.load(std::memory_order_relaxed);
+  if (cur_max > gil_bt_threshold_ns() && ns >= cur_max * 9 / 10) {
+    std::string buf;
+    buf.reserve(4096);
+    gil_dump_backtrace(buf, ns, cur_max, holder);
+    fwrite(buf.data(), 1, buf.size(), stderr);
+  }
+
+  if (cnt % gil_print_period() == 0) {
+    auto total_ns = gil_incref.total_ns.load(std::memory_order_relaxed) +
+        gil_try_incref.total_ns.load(std::memory_order_relaxed) +
+        gil_decref.total_ns.load(std::memory_order_relaxed) +
+        gil_refcnt.total_ns.load(std::memory_order_relaxed);
+    auto max_ns = std::max(
+        {gil_incref.max_ns.load(std::memory_order_relaxed),
+         gil_try_incref.max_ns.load(std::memory_order_relaxed),
+         gil_decref.max_ns.load(std::memory_order_relaxed),
+         gil_refcnt.max_ns.load(std::memory_order_relaxed)});
+    char stats_buf[512];
+    snprintf(
+        stats_buf,
+        sizeof(stats_buf),
+        "[GIL refcount stats] pid=%d, calls: %lu, total: %.2f ms, max: %.3f ms | "
+        "incref: %.2f/%.3f ms (%lu), try_incref: %.2f/%.3f ms (%lu), "
+        "decref: %.2f/%.3f ms (%lu), refcnt: %.2f/%.3f ms (%lu)\n",
+        (int)getpid(),
+        (unsigned long)cnt,
+        total_ns / 1e6,
+        max_ns / 1e6,
+        gil_incref.total_ns.load(std::memory_order_relaxed) / 1e6,
+        gil_incref.max_ns.load(std::memory_order_relaxed) / 1e6,
+        (unsigned long)gil_incref.count.load(std::memory_order_relaxed),
+        gil_try_incref.total_ns.load(std::memory_order_relaxed) / 1e6,
+        gil_try_incref.max_ns.load(std::memory_order_relaxed) / 1e6,
+        (unsigned long)gil_try_incref.count.load(std::memory_order_relaxed),
+        gil_decref.total_ns.load(std::memory_order_relaxed) / 1e6,
+        gil_decref.max_ns.load(std::memory_order_relaxed) / 1e6,
+        (unsigned long)gil_decref.count.load(std::memory_order_relaxed),
+        gil_refcnt.total_ns.load(std::memory_order_relaxed) / 1e6,
+        gil_refcnt.max_ns.load(std::memory_order_relaxed) / 1e6,
+        (unsigned long)gil_refcnt.count.load(std::memory_order_relaxed));
+    fwrite(stats_buf, 1, strlen(stats_buf), stderr);
+  }
+}
+
 using namespace torch;
 using namespace at;
 using namespace c10;
@@ -243,14 +494,38 @@ void ConcretePyInterpreterVTable::decref(PyObject* pyobj) const {
   // PyObjects stored in them.
   if (!Py_IsInitialized())
     return;
+  if (!gil_stats_enabled()) {
+    pybind11::gil_scoped_acquire gil;
+    Py_DECREF(pyobj);
+    return;
+  }
+  auto* holder = gil_get_holder();
+  auto t0 = std::chrono::steady_clock::now();
   pybind11::gil_scoped_acquire gil;
+  auto t1 = std::chrono::steady_clock::now();
+  gil_record(
+      gil_decref,
+      std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count(),
+      holder);
   Py_DECREF(pyobj);
 }
 
 void ConcretePyInterpreterVTable::incref(PyObject* pyobj) const {
   if (!Py_IsInitialized())
     return;
+  if (!gil_stats_enabled()) {
+    pybind11::gil_scoped_acquire gil;
+    Py_INCREF(pyobj);
+    return;
+  }
+  auto* holder = gil_get_holder();
+  auto t0 = std::chrono::steady_clock::now();
   pybind11::gil_scoped_acquire gil;
+  auto t1 = std::chrono::steady_clock::now();
+  gil_record(
+      gil_incref,
+      std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count(),
+      holder);
   Py_INCREF(pyobj);
 }
 
@@ -258,7 +533,21 @@ bool ConcretePyInterpreterVTable::try_incref(
     const c10::impl::PyObjectSlot& pyobj_slot) const {
   if (!Py_IsInitialized())
     return false;
+  if (!gil_stats_enabled()) {
+    pybind11::gil_scoped_acquire gil;
+    PyObject* pyobj = pyobj_slot.load_pyobj();
+    if (!pyobj)
+      return false;
+    return PyUnstable_TryIncRef(pyobj);
+  }
+  auto* holder = gil_get_holder();
+  auto t0 = std::chrono::steady_clock::now();
   pybind11::gil_scoped_acquire gil;
+  auto t1 = std::chrono::steady_clock::now();
+  gil_record(
+      gil_try_incref,
+      std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count(),
+      holder);
   PyObject* pyobj = pyobj_slot.load_pyobj();
   if (!pyobj) {
     return false;
@@ -269,7 +558,18 @@ bool ConcretePyInterpreterVTable::try_incref(
 size_t ConcretePyInterpreterVTable::refcnt(PyObject* pyobj) const {
   if (!Py_IsInitialized() || pyobj == nullptr)
     return 0;
+  if (!gil_stats_enabled()) {
+    pybind11::gil_scoped_acquire gil;
+    return Py_REFCNT(pyobj);
+  }
+  auto* holder = gil_get_holder();
+  auto t0 = std::chrono::steady_clock::now();
   pybind11::gil_scoped_acquire gil;
+  auto t1 = std::chrono::steady_clock::now();
+  gil_record(
+      gil_refcnt,
+      std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count(),
+      holder);
   return Py_REFCNT(pyobj);
 }
 
